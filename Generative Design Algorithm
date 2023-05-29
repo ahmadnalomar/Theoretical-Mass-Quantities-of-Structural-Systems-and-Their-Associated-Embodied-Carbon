@@ -1,1 +1,3932 @@
+import pandas as pd
+import numpy as np
+import math as math
+import matplotlib.pyplot as plt
+import pickle 
+from scipy.stats import gaussian_kde
+#Inputs type 1 (Building Dimmensions & Information)
+class SteelStructure:
+    SpanBetweenJoist=2 #ft
+    BayLength=20 #ft
+    BayWidth=50 #ft
+    JoistSpan=BayLength #ft
+    NumberOfStoreys=4 #ft
+    H1=13 #ft
+    H2=13 #ft
+    H3=13 #ft
+    H4=13 #ft
+    WallHeight=H4 #
+#Inputs type 2 (Loads on Roof & Floor) all in psf
+class RoofLoads:
+     DL=10
+     LL=80
+     LRL=25
+     SL=15
+     EQL=0
+     RL=0
+     WL=0
+     WALL=36     
+class FloorLoads():
+    DL=10
+    Lconst=80
+    Lservice=80
+    LRL=RoofLoads.LRL
+    SL=RoofLoads.SL
+    EQL=RoofLoads.EQL
+    RL=RoofLoads.RL
+    WL=RoofLoads.WL
+    WALL=36
+BuildingL=100
+BuildingW=100
+LengthBays=BuildingL/SteelStructure.BayLength
+WidthBays=BuildingW/SteelStructure.BayWidth
+# BuildingL=LengthBays*SteelStructure.BayLength
+# BuildingW=WidthBays*SteelStructure.BayWidth
+IntBays=(WidthBays-1)*(LengthBays-1)
+Floors=4
+def DesignSteel(SteelStructure:SteelStructure,RoofLoads:RoofLoads,FloorLoads:FloorLoads,RDDF,JDF,BDF,CDB,CS,DP):
+    LOADS=RoofLoads
 
+ 
+       
+              
+    def DesignBay1R(SteelStructure,LOADS,RDDF,JDF,BDF,CDB,CS,DP,StoreyHeight):
+        def DesignDeck(SteelStructure,LOADS, RDDF):
+            class DeckLoads:
+                DL=LOADS.DL
+                LL=LOADS.LL
+                LRL=LOADS.LRL
+                SL=LOADS.SL
+                EQL=LOADS.EQL
+                RL=LOADS.RL
+                WL=LOADS.WL
+                WALL=LOADS.WALL
+            
+            def MLC(DeckLoads:DeckLoads):
+                #LC is Load Combo
+                LC1=DeckLoads.DL
+                LC2=DeckLoads.DL+DeckLoads.LL
+                LC3=DeckLoads.DL+max(DeckLoads.LRL,DeckLoads.SL,DeckLoads.RL)
+                LC4=DeckLoads.DL+0.75*DeckLoads.LL+0.75*max(DeckLoads.LRL,DeckLoads.SL,DeckLoads.RL)
+                LC5=DeckLoads.DL+max(DeckLoads.WL,DeckLoads.EQL)
+                LC6=DeckLoads.DL+0.75*DeckLoads.LL+0.75*0.6*DeckLoads.WL+0.75*max(DeckLoads.LRL,DeckLoads.SL,DeckLoads.RL)
+                LC7=DeckLoads.DL+0.75*DeckLoads.LL+0.75*0.75*DeckLoads.EQL+0.75*DeckLoads.SL
+                LC8=0.6*DeckLoads.DL+0.6*DeckLoads.WL
+                LC9=0.6*DeckLoads.DL+0.7*DeckLoads.EQL
+                return(max(LC1,LC2,LC3,LC4,LC5,LC6,LC7,LC8,LC9))
+            
+            def closest_value(input_list, input_value):
+             
+              arr = np.asarray(input_list)
+             
+              i = (np.abs(arr - input_value)).argmin()
+             
+              return arr[i]
+
+            def SelectDeck(RDDF, INPUTS, RD_LCI):
+                RD_LCI=MLC(DeckLoads)
+                x = RDDF.sort_values(by="MaxLoad", ascending=False).loc[(RDDF['MaxSDISpan']>INPUTS.SpanBetweenJoist) & (RDDF['MaxLoad']>RD_LCI)].sort_values(by="DeckWeight")    
+                one_deck = x.iloc[(x['SpanBetweenJoist']-INPUTS.SpanBetweenJoist).abs().argsort()[:2]].iloc[0]
+                return one_deck
+            
+            def AddSelfWeight(one_deck,joistloads,RD_LCI):
+                DeadAddition=one_deck.DeckWeight
+                newdead=DeckLoads.DL+DeadAddition
+                DeckLoads.DL=newdead
+                new_load=MLC(DeckLoads)
+                return new_load
+             
+            def CheckDeck(one_deck, new_load):
+                strength = one_deck.MaxLoad
+                if strength > new_load:
+                    flag = 1
+                    print("RoofDeckWorks")
+                else:
+                    print('StrongerDeckNeeded')
+                    flag = 0
+                return flag
+            
+            RD_LCI=MLC(DeckLoads)
+            one_deck=SelectDeck(RDDF, SteelStructure, RD_LCI)
+            new_load=AddSelfWeight(one_deck, LOADS, RD_LCI)  
+            flag = CheckDeck(one_deck, new_load)
+
+            def looptyloop(flag):
+                counter = 0
+                while flag==0:
+                    two_deck=SelectDeck(RDDF, SteelStructure, new_load)
+                    newload2=two_deck.DeckWeight
+                    flag=CheckDeck(two_deck, newload2)
+                    counter = counter + 1
+                    if counter > 10000:
+                        break
+
+                    return two_deck
+            if CheckDeck(one_deck, new_load)==0:
+                 chosendeck=looptyloop(flag)
+            else:
+                 chosendeck=one_deck
+             
+            return chosendeck
+
+            
+            
+            return chosendeck
+        ChosenRoofDeck=DesignDeck(SteelStructure,LOADS, RDDF)
+        def DesignJoists(INPUTS,LOADS:LOADS,JDF):
+            class lineloads:
+                DL=LOADS.DL*SteelStructure.SpanBetweenJoist
+                LL=LOADS.LL*SteelStructure.SpanBetweenJoist
+                LRL=LOADS.LRL*SteelStructure.SpanBetweenJoist
+                SL=LOADS.SL*SteelStructure.SpanBetweenJoist
+                WL=LOADS.WL*SteelStructure.SpanBetweenJoist
+                EQL=LOADS.EQL*SteelStructure.SpanBetweenJoist
+                RL=LOADS.RL*SteelStructure.SpanBetweenJoist
+
+           
+            
+         
+            def MLCJ(lineloads:lineloads):
+                 #LC is Load Combo
+                 LC1=lineloads.DL
+                 LC2=lineloads.DL+lineloads.LL
+                 LC3=lineloads.DL+max(lineloads.LRL,lineloads.SL,lineloads.RL)
+                 LC4=lineloads.DL+0.75*lineloads.LL+0.75*max(lineloads.LRL,lineloads.SL,lineloads.RL)
+                 LC5=lineloads.DL+max(lineloads.WL,lineloads.EQL)
+                 LC6=lineloads.DL+0.75*lineloads.LL+0.75*0.6*lineloads.WL+0.75*max(lineloads.LRL,lineloads.SL,lineloads.RL)
+                 LC7=lineloads.DL+0.75*lineloads.LL+0.75*0.75*lineloads.EQL+0.75*lineloads.SL
+                 LC8=0.6*lineloads.DL+0.6*lineloads.WL
+                 LC9=0.6*lineloads.DL+0.7*lineloads.EQL
+                 return(max(LC1,LC2,LC3,LC4,LC5,LC6,LC7,LC8,LC9))
+            
+            def SelectJoist(JDF,JoistSpan,J_LCI):
+               
+                AppJoists=JDF.loc[(JDF['strong']>J_LCI)]
+                Joist1=AppJoists.loc[(AppJoists.Weight==AppJoists.Weight.min())]
+                Joist1=Joist1.loc[(Joist1.strong==Joist1.strong.max())]
+                Joist1=Joist1.loc[(Joist1.long==Joist1.long.max())]
+                return Joist1
+            def AddJoistWeight(Joist1,lineloads):
+                JoistAdded=Joist1.iloc[0]['Weight']
+                lineloads.DL=JoistAdded+lineloads.DL
+                J_LCS=MLCJ(lineloads)
+                
+                return J_LCS
+
+            def check_joist(Joist1,J_LCS):
+                strength=Joist1.iloc[0]['strong']
+                if strength>J_LCI:
+                    fflag = 1 
+                    print("joist is sufficient")
+                else: 
+                    fflag = 0 
+                    print("joist is not good")
+                return fflag 
+            
+            J_LCI=MLCJ(lineloads)
+            Joist1 = SelectJoist(JDF, SteelStructure.JoistSpan, J_LCI)
+            J_LCS=AddJoistWeight(Joist1,lineloads)
+            joistflag=check_joist(Joist1,J_LCS)
+            
+         
+            
+
+            def looptyloopj(joistflag):
+                counter = 0
+                while joistflag==0:
+                    joist2=SelectJoist(JDF, INPUTS, J_LCS)
+                    newload2=AddJoistWeight(joist2, lineloads)
+                    joistflag=check_joist(joist2, newload2)
+                    counter = counter + 1
+                    if counter > 10000:
+                        break
+            
+                    return joist2
+            if check_joist(Joist1, J_LCI)==0:
+                 chosenjoist=looptyloopj(joistflag)
+            else:
+                 chosenjoist=Joist1
+             
+            return chosenjoist
+            
+            
+            return ChosenRoofJoist
+        ChosenRoofJoist=DesignJoists(SteelStructure,LOADS,JDF)
+        def DesignInteriorPerperndicularBeam(SteelStructure,LOADS:LOADS,BDF):
+            class beamloads:
+                DL=LOADS.DL
+                LL=LOADS.LL
+                LRL=LOADS.LRL
+                SL=LOADS.SL
+                EQL=LOADS.EQL
+                RL=LOADS.RL
+                WL=LOADS.WL
+                WALL=LOADS.WALL
+                
+            def GetFactoredMoment(SteelStructure,ChosenRoofDeck,ChosenRoofJoist,beamloads:beamloads,SelfWeightBeam):
+                RJDeck=0.5*ChosenRoofDeck.DeckWeight*SteelStructure.SpanBetweenJoist*SteelStructure.JoistSpan/1000 
+                RJJoist=0.5*ChosenRoofJoist.iloc[0]['Weight']*SteelStructure.JoistSpan/1000
+                RJRain=0.5*beamloads.RL*SteelStructure.SpanBetweenJoist*SteelStructure.JoistSpan*1000 
+                RJLR=0.5*beamloads.LRL*SteelStructure.SpanBetweenJoist*SteelStructure.JoistSpan/1000 
+                RJWL=0.5*beamloads.WL*SteelStructure.SpanBetweenJoist*SteelStructure.JoistSpan/1000 
+                RJSL=0.5*beamloads.SL*SteelStructure.SpanBetweenJoist*SteelStructure.JoistSpan/1000 
+                RJEQL=0.5*beamloads.EQL*SteelStructure.SpanBetweenJoist*SteelStructure.JoistSpan/1000 
+                RJLive=0.5*beamloads.LL*SteelStructure.SpanBetweenJoist*SteelStructure.JoistSpan*1/1000
+                RJDead=(RJJoist+RJDeck)
+                MSelfWeight=(SelfWeightBeam*((SteelStructure.JoistSpan)**2)*(1/8))/1000
+                MLive=RJLive*SteelStructure.BayWidth
+                MDead=(RJDead*SteelStructure.BayWidth)+MSelfWeight
+                MRain=RJRain*SteelStructure.BayWidth 
+                MSnow=RJSL*SteelStructure.BayWidth
+                MWind=RJWL*SteelStructure.BayWidth
+                MEQ=RJEQL*SteelStructure.BayWidth
+                MRoofLive=RJLR*SteelStructure.BayWidth
+                MU1=1.4*MDead
+                MU2=1.2*MDead+1.6*MLive+0.5*max(MRoofLive,MSnow,MRain)
+                MU3=1.2*MDead+1.6*max(MRoofLive,MSnow,MRain)+0.5*MLive
+                MU4=1.2*MDead+MWind+0.5*MLive+0.5*max(MRoofLive,MSnow,MRain)
+                MU5=1.2*MDead+MEQ+0.5*MLive+0.2*MSnow
+                MU6=0.9*MDead+MWind
+                MU7=0.9*MDead+MEQ
+                MU=max(MU1,MU2,MU3,MU4,MU5,MU6,MU7)
+                
+                return MU
+            
+            
+            #Number of Joists 
+            
+            def getCB(NJ1):
+                CB=2
+                if NJ1==1:
+                    CB=1.67
+                elif NJ1==2:
+                    CB=1
+                elif NJ1==3:
+                    CB=1.11
+                elif NJ1>3:
+                    CB=1
+                return CB
+            
+            def SelectBeam(BDF,MMax) :
+                AppBeams=BDF.loc[(BDF['Moment']>MMax)]
+                Beam=AppBeams.loc[(AppBeams.Weight==AppBeams.Weight.min())]
+                Beam1=Beam.loc[(Beam.Moment==Beam.Moment.max())]
+                return Beam1
+            
+            def CheckLTB(BeamChoice,SteelStructure):
+                if BeamChoice.iloc[0]['Lp']<SteelStructure.JoistSpan<BeamChoice.iloc[0]['Lr']:
+                    Capacity=CB1*(BeamChoice.iloc[0]['Moment'])-((BeamChoice.iloc[0]['BendingFactor'])*(SteelStructure.JoistSpan-BeamChoice.iloc[0]['Lp']))
+                else:
+                    Capacity=(BeamChoice.iloc[0]['Moment'])
+                return Capacity
+            
+            def CheckBeam(BeamChoice,BeamCapacity) :
+                if BeamCapacity>GetFactoredMoment(SteelStructure,ChosenRoofDeck,ChosenRoofJoist,beamloads,BeamChoice.iloc[0]['Weight']):
+                    flag=1
+                else:
+                    flag=0
+                    
+                return flag
+            MMax=GetFactoredMoment(SteelStructure, ChosenRoofDeck, ChosenRoofJoist, beamloads, 0)#K-ft WithoutSW
+            NJ1=math.floor((SteelStructure.BayWidth/SteelStructure.SpanBetweenJoist)-1)
+            CB1=getCB(NJ1)
+            BeamChoice=SelectBeam(BDF, MMax)
+            BeamCapacity=CheckLTB(BeamChoice, SteelStructure)
+
+            BeamFlag=CheckBeam(BeamChoice, BeamCapacity)
+            def looptyloopb(BeamFlag):
+                counter = 0
+                while BeamFlag==0:
+                    Beam2=SelectBeam(BDF,GetFactoredMoment(SteelStructure,ChosenRoofDeck,ChosenRoofJoist,beamloads,BeamChoice.iloc[0]['Weight']))
+                    newload2=GetFactoredMoment(SteelStructure,ChosenRoofDeck,ChosenRoofJoist,beamloads,Beam2.iloc[0]['Weight'])
+                    BeamFlag=CheckBeam(Beam2,newload2)
+                    counter = counter + 1
+                    if counter > 10000:
+                        break
+                    
+                    return Beam2
+            if CheckBeam(BeamChoice, BeamCapacity)==0:
+                   ChosenBeam=looptyloopb(BeamFlag)
+            else:
+                   ChosenBeam=BeamChoice
+               
+            
+            return ChosenBeam
+        InteriorBeamPerpindicular=DesignInteriorPerperndicularBeam(SteelStructure, LOADS, BDF)
+        def DesignExteriorPerpendicularBeam(SteelStructure,LOADS,BDF,StoreyHeight):
+            class beamloads2:
+                DL=LOADS.DL
+                LL=LOADS.LL
+                LRL=LOADS.LRL
+                SL=LOADS.SL
+                EQL=LOADS.EQL
+                RL=LOADS.RL
+                WL=LOADS.WL
+                WALL=LOADS.WALL
+                
+            def GetWallLoad(SteelStructure,beamloads2):
+                Wallpsf=beamloads2.WALL
+                WallPlf=Wallpsf*StoreyHeight
+                MWall=WallPlf*(SteelStructure.BayWidth**2)/8000
+                return MWall
+            
+            
+            def GetFactoredMomentPerimeter(SteelStructure,ChosenRoofDeck,ChosenRoofJoist,beamloads2,SelfWeightBeam):
+                RJDeck=0.5*ChosenRoofDeck.DeckWeight*SteelStructure.SpanBetweenJoist*SteelStructure.JoistSpan/1000 
+                RJJoist=0.5*ChosenRoofJoist.iloc[0]['Weight']*SteelStructure.JoistSpan/1000
+                RJRain=0.5*beamloads2.RL*SteelStructure.SpanBetweenJoist*SteelStructure.JoistSpan*1000 
+                RJLR=0.5*beamloads2.LRL*SteelStructure.SpanBetweenJoist*SteelStructure.JoistSpan/1000 
+                RJWL=0.5*beamloads2.WL*SteelStructure.SpanBetweenJoist*SteelStructure.JoistSpan/1000 
+                RJSL=0.5*beamloads2.SL*SteelStructure.SpanBetweenJoist*SteelStructure.JoistSpan/1000 
+                RJEQL=0.5*beamloads2.EQL*SteelStructure.SpanBetweenJoist*SteelStructure.JoistSpan/1000 
+                RJLive=0.5*beamloads2.LL*SteelStructure.SpanBetweenJoist*SteelStructure.JoistSpan*1/1000
+                RJDead=(RJJoist+RJDeck)
+                MSelfWeight=(SelfWeightBeam*((SteelStructure.JoistSpan)**2)*(1/8))/1000
+                MLive=0.5*RJLive*SteelStructure.BayWidth
+                MDead=0.5*((RJDead*SteelStructure.BayWidth)+MSelfWeight) + Mwall
+                MRain=0.5*RJRain*SteelStructure.BayWidth 
+                MSnow=0.5*RJSL*SteelStructure.BayWidth
+                MWind=0.5*RJWL*SteelStructure.BayWidth
+                MEQ=0.5*RJEQL*SteelStructure.BayWidth
+                MRoofLive=0.5*RJLR*SteelStructure.BayWidth
+                MU1=1.4*MDead
+                MU2=1.2*MDead+1.6*MLive+0.5*max(MRoofLive,MSnow,MRain)
+                MU3=1.2*MDead+1.6*max(MRoofLive,MSnow,MRain)+0.5*MLive
+                MU4=1.2*MDead+MWind+0.5*MLive+0.5*max(MRoofLive,MSnow,MRain)
+                MU5=1.2*MDead+MEQ+0.5*MLive+0.2*MSnow
+                MU6=0.9*MDead+MWind
+                MU7=0.9*MDead+MEQ
+                MU=max(MU1,MU2,MU3,MU4,MU5,MU6,MU7)
+                
+                return MU
+            
+            
+            #Number of Joists 
+            
+            def CB(NJ1):
+                CB=2
+                if NJ1==1:
+                    CB=1.67
+                elif NJ1==2:
+                    CB=1
+                elif NJ1==3:
+                    CB=1.11
+                elif NJ1>3:
+                    CB=1
+                return CB
+            
+            def SelectBeam(BDF,MMax) :
+                AppBeams=BDF.loc[(BDF['Moment']>MMax)]
+                Beam=AppBeams.loc[(AppBeams.Weight==AppBeams.Weight.min())]
+                Beam1=Beam.loc[(Beam.Moment==Beam.Moment.max())]
+                return Beam1
+            
+            def CheckLTB(BeamChoice,SteelStructure):
+                if BeamChoice.iloc[0]['Lp']<SteelStructure.JoistSpan<BeamChoice.iloc[0]['Lr']:
+                    Capacity=CB1*(BeamChoice.iloc[0]['Moment'])-((BeamChoice.iloc[0]['BendingFactor'])*(SteelStructure.JoistSpan-BeamChoice.iloc[0]['Lp']))
+                else:
+                    Capacity=(BeamChoice.iloc[0]['Moment'])
+                return Capacity
+            
+            def CheckBeam(BeamChoice,BeamCapacity) :
+                if BeamCapacity>GetFactoredMomentPerimeter(SteelStructure,ChosenRoofDeck,ChosenRoofJoist,beamloads2,BeamChoice.iloc[0]['Weight']):
+                    flag=1
+                    print("This Beam Works")
+                else:
+                    flag=0
+                    print("This Beam does not Work")
+                    
+                return flag
+            Mwall=GetWallLoad(SteelStructure, beamloads2)
+            MMax=GetFactoredMomentPerimeter(SteelStructure, ChosenRoofDeck, ChosenRoofJoist, beamloads2, 0)#K-ft WithoutSW
+            NJ1=math.floor((SteelStructure.BayWidth/SteelStructure.SpanBetweenJoist)-1)
+            CB1=CB(NJ1)
+            BeamChoice=SelectBeam(BDF, MMax)
+            BeamCapacity=CheckLTB(BeamChoice, SteelStructure)
+
+            BeamFlag=CheckBeam(BeamChoice, BeamCapacity)
+            
+            def looptyloopb2(BeamFlag):
+                counter = 0
+                while BeamFlag==0:
+                    Beam2=SelectBeam(BDF,GetFactoredMomentPerimeter(SteelStructure,ChosenRoofDeck,ChosenRoofJoist,beamloads2,BeamChoice.iloc[0]['Weight']))
+                    newload2=(GetFactoredMomentPerimeter(SteelStructure,ChosenRoofDeck,ChosenRoofJoist,beamloads2,Beam2.iloc[0]['Weight']))+1
+                    BeamFlag=CheckBeam(Beam2,newload2)
+                    counter = counter + 1
+
+                    if counter > 10000:
+                        break
+            
+                    return Beam2
+            if CheckBeam(BeamChoice, BeamCapacity)==0:
+                ChosenBeam=looptyloopb2(BeamFlag)
+            else:
+                ChosenBeam=BeamChoice
+            
+            return ChosenBeam
+        ExteriorBeamPerpindicular=DesignExteriorPerpendicularBeam(SteelStructure, LOADS, BDF,StoreyHeight)
+        def DesignInteriorParallel(SteelStructure,LOADS,BDF):
+            class beamloads3:
+                DL=ChosenRoofDeck.DeckWeight*SteelStructure.SpanBetweenJoist
+                LL=LOADS.LL*SteelStructure.SpanBetweenJoist
+                LRL=LOADS.LRL*SteelStructure.SpanBetweenJoist
+                SL=LOADS.SL*SteelStructure.SpanBetweenJoist
+                EQL=LOADS.EQL*SteelStructure.SpanBetweenJoist
+                RL=LOADS.RL*SteelStructure.SpanBetweenJoist
+                WL=LOADS.WL*SteelStructure.SpanBetweenJoist
+                WALL=LOADS.WALL*SteelStructure.SpanBetweenJoist
+            
+            def GetFactoredMomentParallel(SteelStructure,ChosenRoofDeck,ChosenRoofJoist,beamloads3:beamloads3,SelfWeightBeam):
+                MSelfWeight=(SelfWeightBeam*((SteelStructure.JoistSpan)**2)*(1/8))/1000
+                MLive=(beamloads3.LL*((SteelStructure.JoistSpan)**2)*(1/8))/1000
+                MDead=((beamloads3.DL*((SteelStructure.JoistSpan)**2)*(1/8))/1000)+MSelfWeight
+                MRain=(beamloads3.LL*((SteelStructure.JoistSpan)**2)*(1/8))/1000
+                MSnow=(beamloads3.LL*((SteelStructure.JoistSpan)**2)*(1/8))/1000
+                MWind=(beamloads3.LL*((SteelStructure.JoistSpan)**2)*(1/8))/1000
+                MEQ=(beamloads3.LL*((SteelStructure.JoistSpan)**2)*(1/8))/1000
+                MRoofLive=(beamloads3.LL*((SteelStructure.JoistSpan)**2)*(1/8))/1000
+                MU1=1.4*MDead
+                MU2=1.2*MDead+1.6*MLive+0.5*max(MRoofLive,MSnow,MRain)
+                MU3=1.2*MDead+1.6*max(MRoofLive,MSnow,MRain)+0.5*MLive
+                MU4=1.2*MDead+MWind+0.5*MLive+0.5*max(MRoofLive,MSnow,MRain)
+                MU5=1.2*MDead+MEQ+0.5*MLive+0.2*MSnow
+                MU6=0.9*MDead+MWind
+                MU7=0.9*MDead+MEQ
+                MU=max(MU1,MU2,MU3,MU4,MU5,MU6,MU7)
+                
+                return MU
+            
+            Maxmoment=GetFactoredMomentParallel(SteelStructure, ChosenRoofDeck, ChosenRoofJoist, beamloads3, 0)
+            
+            def SelectBeam(BDF,Maxmoment) :
+                AppBeams=BDF.loc[(BDF['Moment']>Maxmoment)]
+                Beam=AppBeams.loc[(AppBeams.Weight==AppBeams.Weight.min())]
+                Beam1=Beam.loc[(Beam.Moment==Beam.Moment.max())]
+                return Beam1
+            Beam1=SelectBeam(BDF, Maxmoment)
+            def CheckBeam(Beam1,x) :
+                 if Beam1.iloc[0]['Moment']>x:
+                     flag=1
+                     print("This Beam Works")
+                 else:
+                     flag=0
+                     print("This Beam does not Work")
+                     
+                 return flag 
+            Beamflag3=CheckBeam(Beam1,Maxmoment)
+            
+            def looptyloopb3(BeamFlag3):
+                counter = 0
+                while BeamFlag3==0:
+                    Beam2=SelectBeam(BDF,GetFactoredMomentParallel(SteelStructure,ChosenRoofDeck,ChosenRoofJoist,beamloads3,Beam1.iloc[0]['Weight']))
+                    newload2=GetFactoredMomentParallel(SteelStructure,ChosenRoofDeck,ChosenRoofJoist,beamloads3,Beam2.iloc[0]['Weight'])
+                    BeamFlag3=CheckBeam(Beam2,newload2)
+                    counter = counter + 1
+                    if counter > 10000:
+                        break
+            
+               
+                    return Beam2
+            if CheckBeam(Beam1,Maxmoment)==0:
+                   ChosenBeam=looptyloopb3(Beamflag3)
+            else:
+                   ChosenBeam=Beam1
+               
+            return ChosenBeam        
+        InteriorBeamParallel=DesignInteriorParallel(SteelStructure, LOADS, BDF)
+        def DesignExteriorParallel(SteelStructure,LOADS,BDF,StoreyHeight):
+         
+            class beamloads3:
+                DL=ChosenRoofDeck.DeckWeight*SteelStructure.SpanBetweenJoist
+                LL=LOADS.LL*SteelStructure.SpanBetweenJoist
+                LRL=LOADS.LRL*SteelStructure.SpanBetweenJoist
+                SL=LOADS.SL*SteelStructure.SpanBetweenJoist
+                EQL=LOADS.EQL*SteelStructure.SpanBetweenJoist
+                RL=LOADS.RL*SteelStructure.SpanBetweenJoist
+                WL=LOADS.WL*SteelStructure.SpanBetweenJoist
+                WALL=LOADS.WALL
+                
+            def GetWallLoad(SteelStructure,beamloads3):
+                Wallpsf=beamloads3.WALL
+                WallPlf=Wallpsf*StoreyHeight
+                MWall=WallPlf*(SteelStructure.BayWidth**2)/8000
+                return MWall
+            Mwall=GetWallLoad(SteelStructure, beamloads3)
+             
+                  
+
+            
+            def GetFactoredMomentParallel(SteelStructure,ChosenRoofDeck,ChosenRoofJoist,beamloads3:beamloads3,SelfWeightBeam):
+                MSelfWeight=(SelfWeightBeam*((SteelStructure.JoistSpan)**2)*(1/8))/1000
+                MLive=0.5*(beamloads3.LL*((SteelStructure.JoistSpan)**2)*(1/8))/1000
+                MDead=0.5*((beamloads3.DL*((SteelStructure.JoistSpan)**2)*(1/8))/1000)+MSelfWeight+Mwall
+                MRain=0.5*(beamloads3.LL*((SteelStructure.JoistSpan)**2)*(1/8))/1000
+                MSnow=0.5*(beamloads3.LL*((SteelStructure.JoistSpan)**2)*(1/8))/1000
+                MWind=0.5*(beamloads3.LL*((SteelStructure.JoistSpan)**2)*(1/8))/1000
+                MEQ=0.5*(beamloads3.LL*((SteelStructure.JoistSpan)**2)*(1/8))/1000
+                MRoofLive=(beamloads3.LL*((SteelStructure.JoistSpan)**2)*(1/8))/1000
+                MU1=1.4*MDead
+                MU2=1.2*MDead+1.6*MLive+0.5*max(MRoofLive,MSnow,MRain)
+                MU3=1.2*MDead+1.6*max(MRoofLive,MSnow,MRain)+0.5*MLive
+                MU4=1.2*MDead+MWind+0.5*MLive+0.5*max(MRoofLive,MSnow,MRain)
+                MU5=1.2*MDead+MEQ+0.5*MLive+0.2*MSnow
+                MU6=0.9*MDead+MWind
+                MU7=0.9*MDead+MEQ
+                MU=max(MU1,MU2,MU3,MU4,MU5,MU6,MU7)
+                
+                return MU
+            
+            Maxmoment=GetFactoredMomentParallel(SteelStructure, ChosenRoofDeck, ChosenRoofJoist, beamloads3, 0)
+            
+            def SelectBeam(BDF,Maxmoment) :
+                AppBeams=BDF.loc[(BDF['Moment']>Maxmoment)]
+                Beam=AppBeams.loc[(AppBeams.Weight==AppBeams.Weight.min())]
+                Beam1=Beam.loc[(Beam.Moment==Beam.Moment.max())]
+                return Beam1
+            Beam1=SelectBeam(BDF, Maxmoment)
+            def CheckBeam(Beam1,x) :
+                 if Beam1.iloc[0]['Moment']>x:
+                     flag=1
+                     print("This Beam Works")
+                 else:
+                     flag=0
+                     print("This Beam does not Work")
+                     
+                 return flag 
+            Beamflag3=CheckBeam(Beam1,Maxmoment)
+            
+            def looptyloopb3(BeamFlag3):
+                counter = 0
+                while BeamFlag3==0:
+                    Beam2=SelectBeam(BDF,GetFactoredMomentParallel(SteelStructure,ChosenRoofDeck,ChosenRoofJoist,beamloads3,Beam1.iloc[0]['Weight']))
+                    newload2=GetFactoredMomentParallel(SteelStructure,ChosenRoofDeck,ChosenRoofJoist,beamloads3,Beam2.iloc[0]['Weight'])
+                    BeamFlag3=CheckBeam(Beam2,newload2)
+                    counter = counter + 1
+                    if counter > 10000:
+                        break
+            
+
+                    
+                    return Beam2
+            if CheckBeam(Beam1,Maxmoment)==0:
+                     ChosenBeam=looptyloopb3(Beamflag3)
+            else:
+                     ChosenBeam=Beam1
+                 
+            return ChosenBeam
+            ChosenBeam=looptyloopb3(Beamflag3)
+            
+            return ChosenBeam
+        ExteriorBeamParallel=DesignExteriorParallel(SteelStructure, LOADS, BDF, StoreyHeight)
+        class BeamSelfLoads:
+            ExteriorParallel=ExteriorBeamParallel.iloc[0]['Weight']
+            ExteriorPerpeniduclar=ExteriorBeamPerpindicular.iloc[0]['Weight']
+            InteriorParallel=InteriorBeamParallel.iloc[0]['Weight']
+            InteriorPerpendicular=InteriorBeamPerpindicular.iloc[0]['Weight']
+        def DesignWidthColumn(SteelStructure,LOADS,CDB,StoreyHeight):          
+             class WidthColLoads:
+                 DL=(LOADS.DL*(0.5*SteelStructure.BayLength)*(SteelStructure.BayWidth))+(BeamSelfLoads.InteriorPerpendicular*SteelStructure.BayLength*0.5)+(BeamSelfLoads.ExteriorParallel*SteelStructure.BayWidth)
+                 LL=(LOADS.LL*(0.5*SteelStructure.BayLength)*(SteelStructure.BayWidth))
+                 LRL=(LOADS.LRL*(0.5*SteelStructure.BayLength)*(SteelStructure.BayWidth))
+                 SL=(LOADS.SL*(0.5*SteelStructure.BayLength)*(SteelStructure.BayWidth))
+                 EQL=(LOADS.EQL*(0.5*SteelStructure.BayLength)*(SteelStructure.BayWidth))
+                 RL=(LOADS.RL*(0.5*SteelStructure.BayLength)*(SteelStructure.BayWidth))
+                 SL=(LOADS.SL*(0.5*SteelStructure.BayLength)*(SteelStructure.BayWidth))
+                 WL=(LOADS.WL*(0.5*SteelStructure.BayLength)*(SteelStructure.BayWidth))
+             def FactoredAxialLoads(WidthColLoads:WidthColLoads):
+                 LC1=1.4*WidthColLoads.DL
+                 LC2=1.2*WidthColLoads.DL+1.6*WidthColLoads.LL+0.5*(max(WidthColLoads.LRL,WidthColLoads.SL))
+                 LC3=1.2*WidthColLoads.DL+1.6*(max(WidthColLoads.LRL,LOADS.SL))+0.5*WidthColLoads.LL
+                 
+                 PU=max(LC1,LC2,LC3)
+                 
+                 return PU
+             PUWidth=FactoredAxialLoads(WidthColLoads)/1000
+             KLRoof=math.ceil(StoreyHeight)
+             def SelectColumn(PUWidth,CDB):
+                 AppCols=CDB.loc[(CDB['KL']==KLRoof)]
+                 AppCols1=AppCols.loc[(AppCols['LRFD']>PUWidth)]
+                 EconCol=AppCols1.loc[(AppCols1['plf']==AppCols1['plf'].min())]
+                 return EconCol
+             CCol1=SelectColumn(PUWidth, CDB)
+             
+             
+             return CCol1
+        WidthColumn=DesignWidthColumn(SteelStructure, LOADS, CDB,StoreyHeight)
+        def DesignCornerColumn(SteelStructure,LOADS,CDB,StoreyHeight):
+            class CornerColLoads:
+                DL=(LOADS.DL*(0.5*SteelStructure.BayLength)*(0.5*SteelStructure.BayWidth))+(BeamSelfLoads.ExteriorParallel*SteelStructure.BayLength*0.5)+(BeamSelfLoads.ExteriorPerpeniduclar*SteelStructure.BayWidth*0.5)
+                LL=(LOADS.LL*(0.5*SteelStructure.BayLength)*(0.5*SteelStructure.BayWidth))
+                LRL=(LOADS.LRL*(0.5*SteelStructure.BayLength)*(0.5*SteelStructure.BayWidth))
+                SL=(LOADS.SL*(0.5*SteelStructure.BayLength)*(0.5*SteelStructure.BayWidth))
+                EQL=(LOADS.EQL*(0.5*SteelStructure.BayLength)*(0.5*SteelStructure.BayWidth))
+                RL=(LOADS.RL*(0.5*SteelStructure.BayLength)*(0.5*SteelStructure.BayWidth))
+                SL=(LOADS.SL*(0.5*SteelStructure.BayLength)*(0.5*SteelStructure.BayWidth))
+                WL=(LOADS.WL*(0.5*SteelStructure.BayLength)*(0.5*SteelStructure.BayWidth))
+                
+            def FactoredAxialLoads(CornerColLoads:CornerColLoads):
+                LC1=1.4*CornerColLoads.DL
+                LC2=1.2*CornerColLoads.DL+1.6*CornerColLoads.LL+0.5*(max(CornerColLoads.LRL,CornerColLoads.SL))
+                LC3=1.2*CornerColLoads.DL+1.6*(max(CornerColLoads.LRL,LOADS.SL))+0.5*CornerColLoads.LL
+                
+                PU=max(LC1,LC2,LC3)
+                
+                return PU
+            PUCorner=FactoredAxialLoads(CornerColLoads)/1000
+            KLRoof=math.ceil(StoreyHeight)
+            def SelectColumn(PUCorner,CDB):
+                AppCols=CDB.loc[(CDB['KL']==KLRoof)]
+                AppCols1=AppCols.loc[(AppCols['LRFD']>PUCorner)]
+                EconCol=AppCols1.loc[(AppCols1['plf']==AppCols1['plf'].min())]
+                return EconCol
+            CCol1=SelectColumn(PUCorner, CDB)
+            
+            
+            return CCol1
+        CornerColumn=DesignCornerColumn(SteelStructure, LOADS, CDB,StoreyHeight)
+        def DesignLengthColumn(SteelStructure,LOADS,CDB,StoreyHeight):
+             class LengthColLoads:
+                 DL=(LOADS.DL*(SteelStructure.BayLength)*(0.5*SteelStructure.BayWidth))+(BeamSelfLoads.ExteriorPerpeniduclar*SteelStructure.BayLength)+(BeamSelfLoads.InteriorParallel*SteelStructure.BayWidth*0.5)
+                 LL=(LOADS.LL*(SteelStructure.BayLength)*(0.5*SteelStructure.BayWidth))
+                 LRL=(LOADS.LRL*(SteelStructure.BayLength)*(0.5*SteelStructure.BayWidth))
+                 SL=(LOADS.SL*(SteelStructure.BayLength)*(0.5*SteelStructure.BayWidth))
+                 EQL=(LOADS.EQL*(SteelStructure.BayLength)*(0.5*SteelStructure.BayWidth))
+                 RL=(LOADS.RL*(SteelStructure.BayLength)*(0.5*SteelStructure.BayWidth))
+                 SL=(LOADS.SL*(SteelStructure.BayLength)*(0.5*SteelStructure.BayWidth))
+                 WL=(LOADS.WL*(SteelStructure.BayLength)*(0.5*SteelStructure.BayWidth))
+             def FactoredAxialLoads(LengthColLoads:LengthColLoads):
+                 LC1=1.4*LengthColLoads.DL
+                 LC2=1.2*LengthColLoads.DL+1.6*LengthColLoads.LL+0.5*(max(LengthColLoads.LRL,LengthColLoads.SL))
+                 LC3=1.2*LengthColLoads.DL+1.6*(max(LengthColLoads.LRL,LOADS.SL))+0.5*LengthColLoads.LL
+                 
+                 PU=max(LC1,LC2,LC3)
+                 
+                 return PU
+             PULength=FactoredAxialLoads(LengthColLoads)/1000
+             KLRoof=math.ceil(StoreyHeight)
+             def SelectColumn(PULength,CDB):
+                 AppCols=CDB.loc[(CDB['KL']==KLRoof)]
+                 AppCols1=AppCols.loc[(AppCols['LRFD']>PULength)]
+                 EconCol=AppCols1.loc[(AppCols1['plf']==AppCols1['plf'].min())]
+                 return EconCol
+             CCol1=SelectColumn(PULength, CDB)
+             
+             
+             return CCol1
+        LengthColumn=DesignLengthColumn(SteelStructure, LOADS, CDB,StoreyHeight)
+        def DesignInteriorColumn(SteelStructure,LOADS,CDB,StoreyHeight):
+             class InteriorColLoads:
+                 DL=(LOADS.DL*(SteelStructure.BayLength)*(SteelStructure.BayWidth))+(BeamSelfLoads.InteriorPerpendicular*SteelStructure.BayLength)+(BeamSelfLoads.InteriorParallel*SteelStructure.BayWidth)
+                 LL=(LOADS.LL*(SteelStructure.BayLength)*(SteelStructure.BayWidth))
+                 LRL=(LOADS.LRL*(SteelStructure.BayLength)*(SteelStructure.BayWidth))
+                 SL=(LOADS.SL*(SteelStructure.BayLength)*(SteelStructure.BayWidth))
+                 EQL=(LOADS.EQL*(SteelStructure.BayLength)*(SteelStructure.BayWidth))
+                 RL=(LOADS.RL*(SteelStructure.BayLength)*(SteelStructure.BayWidth))
+                 SL=(LOADS.SL*(SteelStructure.BayLength)*(SteelStructure.BayWidth))
+                 WL=(LOADS.WL*(SteelStructure.BayLength)*(SteelStructure.BayWidth))
+             def FactoredAxialLoads(InteriorColLoads:InteriorColLoads):
+                 LC1=1.4*InteriorColLoads.DL
+                 LC2=1.2*InteriorColLoads.DL+1.6*InteriorColLoads.LL+0.5*(max(InteriorColLoads.LRL,InteriorColLoads.SL))
+                 LC3=1.2*InteriorColLoads.DL+1.6*(max(InteriorColLoads.LRL,InteriorColLoads.SL))+0.5*InteriorColLoads.LL
+                 
+                 PU=max(LC1,LC2,LC3)
+                 
+                 return PU
+             PUint=FactoredAxialLoads(InteriorColLoads)/1000
+             KLRoof=math.ceil(StoreyHeight)
+             def SelectColumn(PUint,CDB):
+                 AppCols=CDB.loc[(CDB['KL']==KLRoof)]
+                 AppCols1=AppCols.loc[(AppCols['LRFD']>PUint)]
+                 EconCol=AppCols1.loc[(AppCols1['plf']==AppCols1['plf'].min())]
+                 return EconCol
+             CCol1=SelectColumn(PUint, CDB)
+            
+                 
+             
+             
+             return CCol1
+        IntColumn=DesignInteriorColumn(SteelStructure, LOADS, CDB,StoreyHeight)
+        def DesignSlab(SteelStructure,FLOADS,CS,DP):
+            def MLConst(FLOADS:FLOADS,DD):
+                #LC is Load Combo
+                LC1=FLOADS.DL+DD
+                LC2=FLOADS.DL+DD+FLOADS.Lconst
+                LC3=FLOADS.DL+DD+max(FLOADS.LRL,FLOADS.SL,FLOADS.RL)
+                LC4=FLOADS.DL+DD+0.75*FLOADS.Lconst+0.75*max(FLOADS.LRL,FLOADS.SL,FLOADS.RL)
+                LC5=FLOADS.DL+DD+max(FLOADS.WL,FLOADS.EQL)
+                LC6=FLOADS.DL+DD+0.75*FLOADS.Lconst+0.75*0.6*FLOADS.WL+0.75*max(FLOADS.LRL,FLOADS.SL,FLOADS.RL)
+                LC7=FLOADS.DL+DD+0.75*FLOADS.Lconst+0.75*0.75*FLOADS.EQL+0.75*FLOADS.SL
+                LC8=0.6*(FLOADS.DL+DD)+0.6*FLOADS.WL
+                LC9=0.6*(FLOADS.DL+DD)+0.7*FLOADS.EQL
+                return(max(LC1,LC2,LC3,LC4,LC5,LC6,LC7,LC8,LC9))
+            MaxConst=MLConst(FLOADS(),0)
+            #start by finding the minimum slab thickness for the clear span 
+            def FindmminSlabT(CS,SteelStructure:SteelStructure()):
+                appslab=CS.loc[(CS['ClearSpan']>=SteelStructure.SpanBetweenJoist)]
+                removedummy=appslab.loc[(appslab['As']>0)]
+                minslabt=removedummy.loc[removedummy['SlabDepth']==removedummy['SlabDepth'].min()]
+                t=minslabt.iloc[0]['SlabDepth']
+                return t
+            tmin=FindmminSlabT(CS, SteelStructure)
+            
+                
+                
+            #Begin by finding deck type that is suitable
+            def FindSuitableDeck(SteelStructure:SteelStructure(),DP,MaxConst,tmin):
+                SDT=DP.loc[(DP['sdimax']>SteelStructure.SpanBetweenJoist)]
+                SDT1=SDT
+                SDT2=SDT1.loc[(SDT['Load']>MaxConst)]
+                if SteelStructure.SpanBetweenJoist <3:
+                    z=3
+                elif SteelStructure.SpanBetweenJoist >8:
+                    z=8
+                else:z=SteelStructure.SpanBetweenJoist
+                SDT3=SDT2.loc[(SDT1['Span']==z)]
+                SDT4=SDT3.loc[(SDT2['PanSlabWeight']==SDT3['PanSlabWeight'].min())]
+                SDT5=SDT4.loc[(SDT4['sdimax']==SDT4['sdimax'].max())]
+                
+                return SDT5
+            SDT5=FindSuitableDeck(SteelStructure, DP,MaxConst,tmin)
+            
+            MaxConstSW=MLConst(FLOADS, SDT5.iloc[0]['PanSlabWeight'])
+            
+            
+            def CheckPan(SDT5,MaxConstSW):
+                if SDT5.iloc[0]['Load']>MaxConstSW:
+                    cheecks=6
+                else:
+                    cheecks=5
+                return cheecks
+            flaggers=CheckPan(SDT5, MaxConstSW)
+            
+            def loopypan(flaggers):
+                counter=0
+                while flaggers==5:
+                    newpan=FindSuitableDeck(SteelStructure, DP, MaxConstSW,tmin)
+                    newload=MLConst(FLOADS, newpan.iloc[0]['PanSlabWeight'])
+                    flaggers=CheckPan(newload, newpan)
+                    if counter > 10000:
+                        break
+            
+                else:
+                    newpan=SDT5
+                    
+                    return newpan
+            SDT0=SDT5
+            def MLService(FLOADS:FLOADS,DD):
+                #LC is Load Combo
+                LC1=FLOADS.DL+DD
+                LC2=FLOADS.DL+DD+FLOADS.Lservice
+                LC3=FLOADS.DL+DD+max(FLOADS.LRL,FLOADS.SL,FLOADS.RL)
+                LC4=FLOADS.DL+DD+0.75*FLOADS.Lservice+0.75*max(FLOADS.LRL,FLOADS.SL,FLOADS.RL)
+                LC5=FLOADS.DL+DD+max(FLOADS.WL,FLOADS.EQL)
+                LC6=FLOADS.DL+DD+0.75*FLOADS.Lservice+0.75*0.6*FLOADS.WL+0.75*max(FLOADS.LRL,FLOADS.SL,FLOADS.RL)
+                LC7=FLOADS.DL+DD+0.75*FLOADS.Lservice+0.75*0.75*FLOADS.EQL+0.75*FLOADS.SL
+                LC8=0.6*(FLOADS.DL+DD)+0.6*FLOADS.WL
+                LC9=0.6*(FLOADS.DL+DD)+0.7*FLOADS.EQL
+                return(max(LC1,LC2,LC3,LC4,LC5,LC6,LC7,LC8,LC9))
+            MaxService=MLService(FLOADS(),SDT0.iloc[0]['PanSlabWeight'])
+            
+            def FindSuitableSlab(CS,MaxService,SDT0):
+                s1=CS.loc[CS['dtype']==SDT0.iloc[0]['PanType']]
+                s2=s1.loc[(s1['ClearSpan']>=SteelStructure.SpanBetweenJoist)]
+                s3=s2.loc[(s2['ClearSpan']==s2['ClearSpan'].min())]
+                s4=s3
+                s5=s4.loc[(s2['slabload']>MaxService)]
+                s6=s5.loc[(s4['As']==s5['As'].min())]
+                return s6
+            Slab=FindSuitableSlab(CS, MaxService,SDT0)
+            def CheckSlab(Slab,MaxService):
+                if Slab.iloc[0]['WWF']=='99':
+                    
+                    flag=0
+                else:
+                    flag=1
+                    print('Slab Works!!')
+                    return flag 
+            slabflag=CheckSlab(Slab, MaxService)
+            
+            if slabflag==0:
+                def loopyslab(slabflag,tmin):
+                    counter=0
+                    while slabflag==0:
+                        tnew=tmin+0.5
+                        SDNEW=FindSuitableDeck(SteelStructure, DP,MaxConst,tnew)
+                        dloadnew=MLConst(FLOADS, SDNEW.iloc[0]['PanSlabWeight'])
+                        PanFlag1=CheckPan(SDNEW, dloadnew)
+                        def loopypan1(PanFlag1):
+                            counter=0
+                            while PanFlag1==5:
+                                newpan=FindSuitableDeck(SteelStructure(),DP,dloadnew,tnew)
+                                newload=MLConst(FLOADS, newpan.iloc[0]['PanSlabWeight'])
+                                PanFlag1=CheckPan(newpan, newload)
+                                if counter > 10:
+                                    break
+                
+                            else:
+                                newpan=SDNEW
+                                
+                                return newpan
+                        SDT1=loopypan1(PanFlag1)
+                        slabnew=FindSuitableSlab(CS, MaxService,SDT1)
+                        slabflag=CheckSlab(slabnew, MaxService)
+                        if counter > 10000:
+                            break
+                        return slabnew,SDT1
+                slab=loopyslab(slabflag, tmin)[0]
+                pan=loopyslab(slabflag, tmin)[1]
+            else:
+                slab=Slab
+                pan=SDT0
+                return slab,pan
+        FloorSlab=DesignSlab(SteelStructure,FLOADS,CS,DP)[0]
+        FloorPan=DesignSlab(SteelStructure,FLOADS,CS,DP)[1]
+        Bay1RoofPan=ChosenRoofDeck
+        Bay1RoofJoist=ChosenRoofJoist
+        Bay1RoofPerPerBeam=ExteriorBeamPerpindicular
+        Bay1RoofPerParBeam=ExteriorBeamParallel
+        Bay1RoofIntPerBeam=InteriorBeamPerpindicular
+        Bay1RoofIntParBeam=InteriorBeamParallel
+        Bay1RoofCornerCol=CornerColumn
+        Bay1RoofWidthCol=WidthColumn
+        Bay1RoofIntCol=IntColumn
+        Bay1RoofLengthCol=LengthColumn
+        Bay1RoofFloorPan=FloorPan
+        Bay1RoofFloorSlab=FloorSlab
+        return Bay1RoofPan,Bay1RoofJoist,Bay1RoofPerPerBeam,Bay1RoofPerParBeam,Bay1RoofIntPerBeam,Bay1RoofIntParBeam,Bay1RoofCornerCol,Bay1RoofWidthCol,Bay1RoofIntCol,Bay1RoofLengthCol,Bay1RoofFloorPan,Bay1RoofFloorSlab
+    Bay1Roof=DesignBay1R(SteelStructure, LOADS, RDDF, JDF, BDF, CDB, CS, DP)
+    def DesignBay1Floor(SteelStructure,LOADS,RDDF,JDF,BDF,CDB,CS,DP,StoreyHeight):
+        SlabDead=Bay1Roof[10].iloc[0]['PanSlabWeight']
+        class FloorLoads1():
+            DL=1+SlabDead
+            Lconst=1
+            Lservice=1
+            LL=max(Lconst,Lservice)
+            LRL=RoofLoads.LRL
+            SL=RoofLoads.SL
+            EQL=RoofLoads.EQL
+            RL=RoofLoads.RL
+            WL=RoofLoads.WL
+            WALL=1
+        LOADS=FloorLoads1
+        
+        
+        def DesignJoists(INPUTS,LOADS:LOADS,JDF):
+            class lineloads:
+                DL=(LOADS.DL)*SteelStructure.SpanBetweenJoist
+                LL=LOADS.LL*SteelStructure.SpanBetweenJoist
+                LRL=LOADS.LRL*SteelStructure.SpanBetweenJoist
+                SL=LOADS.SL*SteelStructure.SpanBetweenJoist
+                WL=LOADS.WL*SteelStructure.SpanBetweenJoist
+                EQL=LOADS.EQL*SteelStructure.SpanBetweenJoist
+                RL=LOADS.RL*SteelStructure.SpanBetweenJoist
+
+           
+            
+         
+            def MLCJ(lineloads:lineloads):
+                 #LC is Load Combo
+                 LC1=lineloads.DL
+                 LC2=lineloads.DL+lineloads.LL
+                 LC3=lineloads.DL+max(lineloads.LRL,lineloads.SL,lineloads.RL)
+                 LC4=lineloads.DL+0.75*lineloads.LL+0.75*max(lineloads.LRL,lineloads.SL,lineloads.RL)
+                 LC5=lineloads.DL+max(lineloads.WL,lineloads.EQL)
+                 LC6=lineloads.DL+0.75*lineloads.LL+0.75*0.6*lineloads.WL+0.75*max(lineloads.LRL,lineloads.SL,lineloads.RL)
+                 LC7=lineloads.DL+0.75*lineloads.LL+0.75*0.75*lineloads.EQL+0.75*lineloads.SL
+                 LC8=0.6*lineloads.DL+0.6*lineloads.WL
+                 LC9=0.6*lineloads.DL+0.7*lineloads.EQL
+                 return(max(LC1,LC2,LC3,LC4,LC5,LC6,LC7,LC8,LC9))
+            
+            def SelectJoist(JDF,JoistSpan,J_LCI):
+                AppJoists=JDF.loc[(JDF['strong']>J_LCI)]
+                Joist1=AppJoists.loc[(AppJoists.Weight==AppJoists.Weight.min())]
+                Joist1=Joist1.loc[(Joist1.strong==Joist1.strong.max())]
+                return Joist1
+            def AddJoistWeight(Joist1,lineloads):
+                JoistAdded=Joist1.iloc[0]['Weight']
+                lineloads.DL=JoistAdded+lineloads.DL
+                J_LCS=MLCJ(lineloads)
+                
+                return J_LCS
+
+            def check_joist(Joist1,J_LCS):
+                strength=Joist1.iloc[0]['strong']
+                if strength>J_LCI:
+                    fflag = 1 
+                    print("joist is sufficient")
+                else: 
+                    fflag = 0 
+                    print("joist is not good")
+                return fflag 
+            
+            J_LCI=MLCJ(lineloads)
+            Joist1 = SelectJoist(JDF, SteelStructure.JoistSpan, J_LCI)
+            J_LCS=AddJoistWeight(Joist1,lineloads)
+            joistflag=check_joist(Joist1,J_LCS)
+            
+         
+            
+
+            def looptyloopj(joistflag):
+                counter = 0
+                while joistflag==0:
+                    joist2=SelectJoist(JDF, INPUTS, J_LCS)
+                    newload2=AddJoistWeight(joist2, lineloads)
+                    joistflag=check_joist(joist2, newload2)
+                    counter = counter + 1
+                    if counter > 10000:
+                        break
+            
+                    return joist2
+            if check_joist(Joist1, J_LCI)==0:
+                 chosenjoist=looptyloopj(joistflag)
+            else:
+                 chosenjoist=Joist1
+             
+            return chosenjoist
+            
+            
+            return ChosenRoofJoist
+        ChosenRoofJoist=DesignJoists(SteelStructure,LOADS,JDF)
+        def DesignInteriorPerperndicularBeam(SteelStructure,LOADS:LOADS,BDF):
+            class beamloads:
+                DL=LOADS.DL
+                LL=LOADS.LL
+                LRL=LOADS.LRL
+                SL=LOADS.SL
+                EQL=LOADS.EQL
+                RL=LOADS.RL
+                WL=LOADS.WL
+                WALL=LOADS.WALL
+                
+            def GetFactoredMoment(SteelStructure,SlabDead,ChosenRoofJoist,beamloads:beamloads,SelfWeightBeam):
+                RJDeck=0.5*SlabDead*SteelStructure.SpanBetweenJoist*SteelStructure.JoistSpan/1000 
+                RJJoist=0.5*ChosenRoofJoist.iloc[0]['Weight']*SteelStructure.JoistSpan/1000
+                RJRain=0.5*beamloads.RL*SteelStructure.SpanBetweenJoist*SteelStructure.JoistSpan*1000 
+                RJLR=0.5*beamloads.LRL*SteelStructure.SpanBetweenJoist*SteelStructure.JoistSpan/1000 
+                RJWL=0.5*beamloads.WL*SteelStructure.SpanBetweenJoist*SteelStructure.JoistSpan/1000 
+                RJSL=0.5*beamloads.SL*SteelStructure.SpanBetweenJoist*SteelStructure.JoistSpan/1000 
+                RJEQL=0.5*beamloads.EQL*SteelStructure.SpanBetweenJoist*SteelStructure.JoistSpan/1000 
+                RJLive=0.5*beamloads.LL*SteelStructure.SpanBetweenJoist*SteelStructure.JoistSpan*1/1000
+                RJDead=(RJJoist+RJDeck)
+                MSelfWeight=(SelfWeightBeam*((SteelStructure.JoistSpan)**2)*(1/8))/1000
+                MLive=RJLive*SteelStructure.BayWidth
+                MDead=(RJDead*SteelStructure.BayWidth)+MSelfWeight
+                MRain=RJRain*SteelStructure.BayWidth 
+                MSnow=RJSL*SteelStructure.BayWidth
+                MWind=RJWL*SteelStructure.BayWidth
+                MEQ=RJEQL*SteelStructure.BayWidth
+                MRoofLive=RJLR*SteelStructure.BayWidth
+                MU1=1.4*MDead
+                MU2=1.2*MDead+1.6*MLive+0.5*max(MRoofLive,MSnow,MRain)
+                MU3=1.2*MDead+1.6*max(MRoofLive,MSnow,MRain)+0.5*MLive
+                MU4=1.2*MDead+MWind+0.5*MLive+0.5*max(MRoofLive,MSnow,MRain)
+                MU5=1.2*MDead+MEQ+0.5*MLive+0.2*MSnow
+                MU6=0.9*MDead+MWind
+                MU7=0.9*MDead+MEQ
+                MU=max(MU1,MU2,MU3,MU4,MU5,MU6,MU7)
+                
+                return MU
+            
+            
+            #Number of Joists 
+            
+            def CB(NJ1):
+                CB=2
+                if NJ1==1:
+                    CB=1.67
+                elif NJ1==2:
+                    CB=1
+                elif NJ1==3:
+                    CB=1.11
+                elif NJ1>3:
+                    CB=1
+                return CB
+            
+            def SelectBeam(BDF,MMax) :
+                AppBeams=BDF.loc[(BDF['Moment']>MMax)]
+                Beam=AppBeams.loc[(AppBeams.Weight==AppBeams.Weight.min())]
+                Beam1=Beam.loc[(Beam.Moment==Beam.Moment.max())]
+                return Beam1
+            
+            def CheckLTB(BeamChoice,SteelStructure):
+                if BeamChoice.iloc[0]['Lp']<SteelStructure.JoistSpan<BeamChoice.iloc[0]['Lr']:
+                    Capacity=CB1*(BeamChoice.iloc[0]['Moment'])-((BeamChoice.iloc[0]['BendingFactor'])*(SteelStructure.JoistSpan-BeamChoice.iloc[0]['Lp']))
+                else:
+                    Capacity=(BeamChoice.iloc[0]['Moment'])
+                return Capacity
+            
+            def CheckBeam(BeamChoice,BeamCapacity) :
+                if BeamCapacity>GetFactoredMoment(SteelStructure,SlabDead,ChosenRoofJoist,beamloads,BeamChoice.iloc[0]['Weight']):
+                    flag=1
+                    print("This Beam Works")
+                else:
+                    flag=0
+                    print("This Beam does not Work")
+                    
+                return flag
+            MMax=GetFactoredMoment(SteelStructure, SlabDead, ChosenRoofJoist, beamloads, 0)#K-ft WithoutSW
+            NJ1=math.floor((SteelStructure.BayWidth/SteelStructure.SpanBetweenJoist)-1)
+            CB1=CB(NJ1)
+            BeamChoice=SelectBeam(BDF, MMax)
+            BeamCapacity=CheckLTB(BeamChoice, SteelStructure)
+
+            BeamFlag=CheckBeam(BeamChoice, BeamCapacity)
+            def looptyloopb(BeamFlag):
+                counter = 0
+                while BeamFlag==0:
+                    Beam2=SelectBeam(BDF,GetFactoredMoment(SteelStructure,SlabDead,ChosenRoofJoist,beamloads,BeamChoice.iloc[0]['Weight']))
+                    newload2=GetFactoredMoment(SteelStructure,SlabDead,ChosenRoofJoist,beamloads,Beam2.iloc[0]['Weight'])
+                    BeamFlag=CheckBeam(Beam2,newload2)
+                    counter = counter + 1
+                    if counter > 10000:
+                        break
+                    
+                    return Beam2
+            if CheckBeam(BeamChoice, BeamCapacity)==0:
+                   ChosenBeam=looptyloopb(BeamFlag)
+            else:
+                   ChosenBeam=BeamChoice
+               
+            return ChosenBeam
+            ChosenBeam=looptyloopb(BeamFlag)
+            
+            return ChosenBeam
+        InteriorBeamPerpindicular=DesignInteriorPerperndicularBeam(SteelStructure, LOADS, BDF)
+        def DesignExteriorPerpendicularBeam(SteelStructure,LOADS,BDF,StoreyHeight):
+            class beamloads2:
+                DL=LOADS.DL
+                LL=LOADS.LL
+                LRL=LOADS.LRL
+                SL=LOADS.SL
+                EQL=LOADS.EQL
+                RL=LOADS.RL
+                WL=LOADS.WL
+                WALL=LOADS.WALL
+                
+            def GetWallLoad(SteelStructure,beamloads2):
+                Wallpsf=beamloads2.WALL
+                WallPlf=Wallpsf*StoreyHeight
+                MWall=WallPlf*(SteelStructure.BayWidth**2)/8000
+                return MWall
+            
+            
+            def GetFactoredMomentPerimeter(SteelStructure,SlabDead,ChosenRoofJoist,beamloads2,SelfWeightBeam):
+                RJDeck=0.5*SlabDead*SteelStructure.SpanBetweenJoist*SteelStructure.JoistSpan/1000 
+                RJJoist=0.5*ChosenRoofJoist.iloc[0]['Weight']*SteelStructure.JoistSpan/1000
+                RJRain=0.5*beamloads2.RL*SteelStructure.SpanBetweenJoist*SteelStructure.JoistSpan*1000 
+                RJLR=0.5*beamloads2.LRL*SteelStructure.SpanBetweenJoist*SteelStructure.JoistSpan/1000 
+                RJWL=0.5*beamloads2.WL*SteelStructure.SpanBetweenJoist*SteelStructure.JoistSpan/1000 
+                RJSL=0.5*beamloads2.SL*SteelStructure.SpanBetweenJoist*SteelStructure.JoistSpan/1000 
+                RJEQL=0.5*beamloads2.EQL*SteelStructure.SpanBetweenJoist*SteelStructure.JoistSpan/1000 
+                RJLive=0.5*beamloads2.LL*SteelStructure.SpanBetweenJoist*SteelStructure.JoistSpan*1/1000
+                RJDead=(RJJoist+RJDeck)
+                MSelfWeight=(SelfWeightBeam*((SteelStructure.JoistSpan)**2)*(1/8))/1000
+                MLive=0.5*RJLive*SteelStructure.BayWidth
+                MDead=0.5*((RJDead*SteelStructure.BayWidth)+MSelfWeight) + Mwall
+                MRain=0.5*RJRain*SteelStructure.BayWidth 
+                MSnow=0.5*RJSL*SteelStructure.BayWidth
+                MWind=0.5*RJWL*SteelStructure.BayWidth
+                MEQ=0.5*RJEQL*SteelStructure.BayWidth
+                MRoofLive=0.5*RJLR*SteelStructure.BayWidth
+                MU1=1.4*MDead
+                MU2=1.2*MDead+1.6*MLive+0.5*max(MRoofLive,MSnow,MRain)
+                MU3=1.2*MDead+1.6*max(MRoofLive,MSnow,MRain)+0.5*MLive
+                MU4=1.2*MDead+MWind+0.5*MLive+0.5*max(MRoofLive,MSnow,MRain)
+                MU5=1.2*MDead+MEQ+0.5*MLive+0.2*MSnow
+                MU6=0.9*MDead+MWind
+                MU7=0.9*MDead+MEQ
+                MU=max(MU1,MU2,MU3,MU4,MU5,MU6,MU7)
+                
+                return MU
+            
+            
+            #Number of Joists 
+            
+            def CB(NJ1):
+                CB=1
+                if NJ1==1:
+                    CB=1.67
+                elif NJ1==2:
+                    CB=1
+                elif NJ1==3:
+                    CB=1.11
+                elif NJ1>3:
+                    CB=1
+                return CB
+            
+            def SelectBeam(BDF,MMax) :
+                AppBeams=BDF.loc[(BDF['Moment']>MMax)]
+                Beam=AppBeams.loc[(AppBeams.Weight==AppBeams.Weight.min())]
+                Beam1=Beam.loc[(Beam.Moment==Beam.Moment.max())]
+                return Beam1
+            
+            def CheckLTB(BeamChoice,SteelStructure):
+                if BeamChoice.iloc[0]['Lp']<SteelStructure.JoistSpan<BeamChoice.iloc[0]['Lr']:
+                    Capacity=CB1*(BeamChoice.iloc[0]['Moment'])-((BeamChoice.iloc[0]['BendingFactor'])*(SteelStructure.JoistSpan-BeamChoice.iloc[0]['Lp']))
+                else:
+                    Capacity=(BeamChoice.iloc[0]['Moment'])
+                return Capacity
+            
+            def CheckBeam(BeamChoice,BeamCapacity) :
+                if BeamCapacity>GetFactoredMomentPerimeter(SteelStructure,SlabDead,ChosenRoofJoist,beamloads2,BeamChoice.iloc[0]['Weight']):
+                    flag=1
+                    print("This Beam Works")
+                else:
+                    flag=0
+                    print("This Beam does not Work")
+                    
+                return flag
+            Mwall=GetWallLoad(SteelStructure, beamloads2)
+            MMax=GetFactoredMomentPerimeter(SteelStructure, SlabDead, ChosenRoofJoist, beamloads2, 0)#K-ft WithoutSW
+            NJ1=math.floor((SteelStructure.BayWidth/SteelStructure.SpanBetweenJoist)-1)
+            CB1=CB(NJ1)
+            BeamChoice=SelectBeam(BDF, MMax)
+            BeamCapacity=CheckLTB(BeamChoice, SteelStructure)
+
+            BeamFlag=CheckBeam(BeamChoice, BeamCapacity)
+            
+            def looptyloopb2(BeamFlag):
+                counter = 0
+                while BeamFlag==0:
+                    Beam2=SelectBeam(BDF,GetFactoredMomentPerimeter(SteelStructure,SlabDead,ChosenRoofJoist,beamloads2,BeamChoice.iloc[0]['Weight']))
+                    newload2=(GetFactoredMomentPerimeter(SteelStructure,SlabDead,ChosenRoofJoist,beamloads2,Beam2.iloc[0]['Weight']))+1
+                    BeamFlag=CheckBeam(Beam2,newload2)
+                    counter = counter + 1
+
+                    if counter > 10000:
+                        break
+            
+                    return Beam2
+            if CheckBeam(BeamChoice, BeamCapacity)==0:
+                ChosenBeam=looptyloopb2(BeamFlag)
+            else:
+                ChosenBeam=BeamChoice
+            
+            return ChosenBeam
+        ExteriorBeamPerpindicular=DesignExteriorPerpendicularBeam(SteelStructure, LOADS, BDF,StoreyHeight)
+        def DesignInteriorParallel(SteelStructure,LOADS,BDF):
+            class beamloads3:
+                DL=LOADS.DL*SteelStructure.SpanBetweenJoist
+                LL=LOADS.LL*SteelStructure.SpanBetweenJoist
+                LRL=LOADS.LRL*SteelStructure.SpanBetweenJoist
+                SL=LOADS.SL*SteelStructure.SpanBetweenJoist
+                EQL=LOADS.EQL*SteelStructure.SpanBetweenJoist
+                RL=LOADS.RL*SteelStructure.SpanBetweenJoist
+                WL=LOADS.WL*SteelStructure.SpanBetweenJoist
+                WALL=LOADS.WALL*SteelStructure.SpanBetweenJoist
+            
+            def GetFactoredMomentParallel(SteelStructure,SlabDead,ChosenRoofJoist,beamloads3:beamloads3,SelfWeightBeam):
+                MSelfWeight=(SelfWeightBeam*((SteelStructure.JoistSpan)**2)*(1/8))/1000
+                MLive=(beamloads3.LL*((SteelStructure.JoistSpan)**2)*(1/8))/1000
+                MDead=((beamloads3.DL*((SteelStructure.JoistSpan)**2)*(1/8))/1000)+MSelfWeight
+                MRain=(beamloads3.LL*((SteelStructure.JoistSpan)**2)*(1/8))/1000
+                MSnow=(beamloads3.LL*((SteelStructure.JoistSpan)**2)*(1/8))/1000
+                MWind=(beamloads3.LL*((SteelStructure.JoistSpan)**2)*(1/8))/1000
+                MEQ=(beamloads3.LL*((SteelStructure.JoistSpan)**2)*(1/8))/1000
+                MRoofLive=(beamloads3.LL*((SteelStructure.JoistSpan)**2)*(1/8))/1000
+                MU1=1.4*MDead
+                MU2=1.2*MDead+1.6*MLive+0.5*max(MRoofLive,MSnow,MRain)
+                MU3=1.2*MDead+1.6*max(MRoofLive,MSnow,MRain)+0.5*MLive
+                MU4=1.2*MDead+MWind+0.5*MLive+0.5*max(MRoofLive,MSnow,MRain)
+                MU5=1.2*MDead+MEQ+0.5*MLive+0.2*MSnow
+                MU6=0.9*MDead+MWind
+                MU7=0.9*MDead+MEQ
+                MU=max(MU1,MU2,MU3,MU4,MU5,MU6,MU7)
+                
+                return MU
+            
+            Maxmoment=GetFactoredMomentParallel(SteelStructure, SlabDead, ChosenRoofJoist, beamloads3, 0)
+            
+            def SelectBeam(BDF,Maxmoment) :
+                AppBeams=BDF.loc[(BDF['Moment']>Maxmoment)]
+                Beam=AppBeams.loc[(AppBeams.Weight==AppBeams.Weight.min())]
+                Beam1=Beam.loc[(Beam.Moment==Beam.Moment.max())]
+                return Beam1
+            Beam1=SelectBeam(BDF, Maxmoment)
+            def CheckBeam(Beam1,x) :
+                 if Beam1.iloc[0]['Moment']>x:
+                     flag=1
+                     print("This Beam Works")
+                 else:
+                     flag=0
+                     print("This Beam does not Work")
+                     
+                 return flag 
+            Beamflag3=CheckBeam(Beam1,Maxmoment)
+            
+            def looptyloopb3(BeamFlag3):
+                counter = 0
+                while BeamFlag3==0:
+                    Beam2=SelectBeam(BDF,GetFactoredMomentParallel(SteelStructure,SlabDead,ChosenRoofJoist,beamloads3,Beam1.iloc[0]['Weight']))
+                    newload2=GetFactoredMomentParallel(SteelStructure,SlabDead,ChosenRoofJoist,beamloads3,Beam2.iloc[0]['Weight'])
+                    BeamFlag3=CheckBeam(Beam2,newload2)
+                    counter = counter + 1
+                    if counter > 10000:
+                        break
+            
+               
+                    return Beam2
+            if CheckBeam(Beam1,Maxmoment)==0:
+                   ChosenBeam=looptyloopb3(Beamflag3)
+            else:
+                   ChosenBeam=Beam1
+               
+            return ChosenBeam        
+        InteriorBeamParallel=DesignInteriorParallel(SteelStructure, LOADS, BDF)
+        def DesignExteriorParallel(SteelStructure,LOADS,BDF,StoreyHeight):
+         
+            class beamloads3:
+                DL=LOADS.DL*SteelStructure.SpanBetweenJoist
+                LL=LOADS.LL*SteelStructure.SpanBetweenJoist
+                LRL=LOADS.LRL*SteelStructure.SpanBetweenJoist
+                SL=LOADS.SL*SteelStructure.SpanBetweenJoist
+                EQL=LOADS.EQL*SteelStructure.SpanBetweenJoist
+                RL=LOADS.RL*SteelStructure.SpanBetweenJoist
+                WL=LOADS.WL*SteelStructure.SpanBetweenJoist
+                WALL=LOADS.WALL
+                
+            def GetWallLoad(SteelStructure,beamloads3):
+                Wallpsf=beamloads3.WALL
+                WallPlf=Wallpsf*StoreyHeight
+                MWall=WallPlf*(SteelStructure.BayWidth**2)/8000
+                return MWall
+            Mwall=GetWallLoad(SteelStructure, beamloads3)
+             
+                  
+
+            
+            def GetFactoredMomentParallel(SteelStructure,SlabDead,ChosenRoofJoist,beamloads3:beamloads3,SelfWeightBeam):
+                MSelfWeight=(SelfWeightBeam*((SteelStructure.JoistSpan)**2)*(1/8))/1000
+                MLive=0.5*(beamloads3.LL*((SteelStructure.JoistSpan)**2)*(1/8))/1000
+                MDead=0.5*((beamloads3.DL*((SteelStructure.JoistSpan)**2)*(1/8))/1000)+MSelfWeight+Mwall
+                MRain=0.5*(beamloads3.LL*((SteelStructure.JoistSpan)**2)*(1/8))/1000
+                MSnow=0.5*(beamloads3.LL*((SteelStructure.JoistSpan)**2)*(1/8))/1000
+                MWind=0.5*(beamloads3.LL*((SteelStructure.JoistSpan)**2)*(1/8))/1000
+                MEQ=0.5*(beamloads3.LL*((SteelStructure.JoistSpan)**2)*(1/8))/1000
+                MRoofLive=(beamloads3.LL*((SteelStructure.JoistSpan)**2)*(1/8))/1000
+                MU1=1.4*MDead
+                MU2=1.2*MDead+1.6*MLive+0.5*max(MRoofLive,MSnow,MRain)
+                MU3=1.2*MDead+1.6*max(MRoofLive,MSnow,MRain)+0.5*MLive
+                MU4=1.2*MDead+MWind+0.5*MLive+0.5*max(MRoofLive,MSnow,MRain)
+                MU5=1.2*MDead+MEQ+0.5*MLive+0.2*MSnow
+                MU6=0.9*MDead+MWind
+                MU7=0.9*MDead+MEQ
+                MU=max(MU1,MU2,MU3,MU4,MU5,MU6,MU7)
+                
+                return MU
+            
+            Maxmoment=GetFactoredMomentParallel(SteelStructure, SlabDead, ChosenRoofJoist, beamloads3, 0)
+            
+            def SelectBeam(BDF,Maxmoment) :
+                AppBeams=BDF.loc[(BDF['Moment']>Maxmoment)]
+                Beam=AppBeams.loc[(AppBeams.Weight==AppBeams.Weight.min())]
+                Beam1=Beam.loc[(Beam.Moment==Beam.Moment.max())]
+                return Beam1
+            Beam1=SelectBeam(BDF, Maxmoment)
+            def CheckBeam(Beam1,x) :
+                 if Beam1.iloc[0]['Moment']>x:
+                     flag=1
+                     print("This Beam Works")
+                 else:
+                     flag=0
+                     print("This Beam does not Work")
+                     
+                 return flag 
+            Beamflag3=CheckBeam(Beam1,Maxmoment)
+            
+            def looptyloopb3(BeamFlag3):
+                counter = 0
+                while BeamFlag3==0:
+                    Beam2=SelectBeam(BDF,GetFactoredMomentParallel(SteelStructure,SlabDead,ChosenRoofJoist,beamloads3,Beam1.iloc[0]['Weight']))
+                    newload2=GetFactoredMomentParallel(SteelStructure,SlabDead,ChosenRoofJoist,beamloads3,Beam2.iloc[0]['Weight'])
+                    BeamFlag3=CheckBeam(Beam2,newload2)
+                    counter = counter + 1
+                    if counter > 10000:
+                        break
+            
+
+                    
+                    return Beam2
+            if CheckBeam(Beam1,Maxmoment)==0:
+                     ChosenBeam=looptyloopb3(Beamflag3)
+            else:
+                     ChosenBeam=Beam1
+                 
+            return ChosenBeam
+            ChosenBeam=looptyloopb3(Beamflag3)
+            
+            return ChosenBeam
+        ExteriorBeamParallel=DesignExteriorParallel(SteelStructure, LOADS, BDF, StoreyHeight)
+        class BeamSelfLoads:
+            ExteriorParallel=ExteriorBeamParallel.iloc[0]['Weight']
+            ExteriorPerpeniduclar=ExteriorBeamPerpindicular.iloc[0]['Weight']
+            InteriorParallel=InteriorBeamParallel.iloc[0]['Weight']
+            InteriorPerpendicular=InteriorBeamPerpindicular.iloc[0]['Weight']
+        def DesignWidthColumn(SteelStructure,LOADS,CDB,StoreyHeight):          
+             class WidthColLoads:
+                 DL=(LOADS.DL*(0.5*SteelStructure.BayLength)*(SteelStructure.BayWidth))+(BeamSelfLoads.InteriorPerpendicular*SteelStructure.BayLength*0.5)+(BeamSelfLoads.ExteriorParallel*SteelStructure.BayWidth)
+                 LL=(LOADS.LL*(0.5*SteelStructure.BayLength)*(SteelStructure.BayWidth))
+                 LRL=(LOADS.LRL*(0.5*SteelStructure.BayLength)*(SteelStructure.BayWidth))
+                 SL=(LOADS.SL*(0.5*SteelStructure.BayLength)*(SteelStructure.BayWidth))
+                 EQL=(LOADS.EQL*(0.5*SteelStructure.BayLength)*(SteelStructure.BayWidth))
+                 RL=(LOADS.RL*(0.5*SteelStructure.BayLength)*(SteelStructure.BayWidth))
+                 SL=(LOADS.SL*(0.5*SteelStructure.BayLength)*(SteelStructure.BayWidth))
+                 WL=(LOADS.WL*(0.5*SteelStructure.BayLength)*(SteelStructure.BayWidth))
+             def FactoredAxialLoads(WidthColLoads:WidthColLoads):
+                 LC1=(1.4*WidthColLoads.DL+(Bay1Roof[10].iloc[0]['PanSlabWeight']*math.ceil(SteelStructure.H4)))
+                 LC2=1.2*WidthColLoads.DL+1.6*WidthColLoads.LL+0.5*(max(WidthColLoads.LRL,WidthColLoads.SL))
+                 LC3=1.2*WidthColLoads.DL+1.6*(max(WidthColLoads.LRL,LOADS.SL))+0.5*WidthColLoads.LL
+                 
+                 PU=max(LC1,LC2,LC3)
+                 
+                 return PU
+             PUWidth=FactoredAxialLoads(WidthColLoads)/1000
+             KLRoof=math.ceil(StoreyHeight)
+             def SelectColumn(PUWidth,CDB):
+                 AppCols=CDB.loc[(CDB['KL']==KLRoof)]
+                 AppCols1=AppCols.loc[(AppCols['LRFD']>PUWidth)]
+                 EconCol=AppCols1.loc[(AppCols1['plf']==AppCols1['plf'].min())]
+                 return EconCol
+             CCol1=SelectColumn(PUWidth, CDB)
+             
+             
+             return CCol1
+        WidthColumn=DesignWidthColumn(SteelStructure, LOADS, CDB,StoreyHeight)
+        def DesignCornerColumn(SteelStructure,LOADS,CDB,StoreyHeight):
+            class CornerColLoads:
+                DL=(LOADS.DL*(0.5*SteelStructure.BayLength)*(0.5*SteelStructure.BayWidth))+(BeamSelfLoads.ExteriorParallel*SteelStructure.BayLength*0.5)+(BeamSelfLoads.ExteriorPerpeniduclar*SteelStructure.BayWidth*0.5)
+                LL=(LOADS.LL*(0.5*SteelStructure.BayLength)*(0.5*SteelStructure.BayWidth))
+                LRL=(LOADS.LRL*(0.5*SteelStructure.BayLength)*(0.5*SteelStructure.BayWidth))
+                SL=(LOADS.SL*(0.5*SteelStructure.BayLength)*(0.5*SteelStructure.BayWidth))
+                EQL=(LOADS.EQL*(0.5*SteelStructure.BayLength)*(0.5*SteelStructure.BayWidth))
+                RL=(LOADS.RL*(0.5*SteelStructure.BayLength)*(0.5*SteelStructure.BayWidth))
+                SL=(LOADS.SL*(0.5*SteelStructure.BayLength)*(0.5*SteelStructure.BayWidth))
+                WL=(LOADS.WL*(0.5*SteelStructure.BayLength)*(0.5*SteelStructure.BayWidth))
+                
+            def FactoredAxialLoads(CornerColLoads:CornerColLoads):
+                LC1=(1.4*CornerColLoads.DL+(Bay1Roof[10].iloc[0]['PanSlabWeight']*math.ceil(SteelStructure.H4)))
+                LC2=1.2*CornerColLoads.DL+1.6*CornerColLoads.LL+0.5*(max(CornerColLoads.LRL,CornerColLoads.SL))
+                LC3=1.2*CornerColLoads.DL+1.6*(max(CornerColLoads.LRL,LOADS.SL))+0.5*CornerColLoads.LL
+                
+                PU=max(LC1,LC2,LC3)
+                
+                return PU
+            PUCorner=FactoredAxialLoads(CornerColLoads)/1000
+            KLRoof=math.ceil(StoreyHeight)
+            def SelectColumn(PUCorner,CDB):
+                AppCols=CDB.loc[(CDB['KL']==KLRoof)]
+                AppCols1=AppCols.loc[(AppCols['LRFD']>PUCorner)]
+                EconCol=AppCols1.loc[(AppCols1['plf']==AppCols1['plf'].min())]
+                return EconCol
+            CCol1=SelectColumn(PUCorner, CDB)
+            
+            return CCol1
+        CornerColumn=DesignCornerColumn(SteelStructure, LOADS, CDB,StoreyHeight)
+        def DesignLengthColumn(SteelStructure,LOADS,CDB,StoreyHeight):
+             class LengthColLoads:
+                 DL=(((LOADS.DL+SlabDead)*(SteelStructure.BayLength)*(0.5*SteelStructure.BayWidth))+(BeamSelfLoads.ExteriorPerpeniduclar*SteelStructure.BayLength)+(BeamSelfLoads.InteriorParallel*SteelStructure.BayWidth*0.5))
+                 LL=(LOADS.LL*(SteelStructure.BayLength)*(0.5*SteelStructure.BayWidth))
+                 LRL=(LOADS.LRL*(SteelStructure.BayLength)*(0.5*SteelStructure.BayWidth))
+                 SL=(LOADS.SL*(SteelStructure.BayLength)*(0.5*SteelStructure.BayWidth))
+                 EQL=(LOADS.EQL*(SteelStructure.BayLength)*(0.5*SteelStructure.BayWidth))
+                 RL=(LOADS.RL*(SteelStructure.BayLength)*(0.5*SteelStructure.BayWidth))
+                 SL=(LOADS.SL*(SteelStructure.BayLength)*(0.5*SteelStructure.BayWidth))
+                 WL=(LOADS.WL*(SteelStructure.BayLength)*(0.5*SteelStructure.BayWidth))
+             def FactoredAxialLoads(LengthColLoads:LengthColLoads):
+                 LC1=(1.4*LengthColLoads.DL+(Bay1Roof[10].iloc[0]['PanSlabWeight']*math.ceil(SteelStructure.H4)))
+                 LC2=1.2*LengthColLoads.DL+1.6*LengthColLoads.LL+0.5*(max(LengthColLoads.LRL,LengthColLoads.SL))
+                 LC3=1.2*LengthColLoads.DL+1.6*(max(LengthColLoads.LRL,LOADS.SL))+0.5*LengthColLoads.LL
+                 
+                 PU=max(LC1,LC2,LC3)
+                 
+                 return PU
+             PULength=FactoredAxialLoads(LengthColLoads)/1000
+             KLRoof=math.ceil(StoreyHeight)
+             def SelectColumn(PULength,CDB):
+                 AppCols=CDB.loc[(CDB['KL']==KLRoof)]
+                 AppCols1=AppCols.loc[(AppCols['LRFD']>PULength)]
+                 EconCol=AppCols1.loc[(AppCols1['plf']==AppCols1['plf'].min())]
+                 return EconCol
+             CCol1=SelectColumn(PULength, CDB)
+             
+             
+             return CCol1
+        LengthColumn=DesignLengthColumn(SteelStructure, LOADS, CDB,StoreyHeight)
+        def DesignInteriorColumn(SteelStructure,LOADS,CDB,StoreyHeight):
+             class InteriorColLoads:
+                 DL=(LOADS.DL*(SteelStructure.BayLength)*(SteelStructure.BayWidth))+(BeamSelfLoads.InteriorPerpendicular*SteelStructure.BayLength)+(BeamSelfLoads.InteriorParallel*SteelStructure.BayWidth)
+                 LL=(LOADS.LL*(SteelStructure.BayLength)*(SteelStructure.BayWidth))
+                 LRL=(LOADS.LRL*(SteelStructure.BayLength)*(SteelStructure.BayWidth))
+                 SL=(LOADS.SL*(SteelStructure.BayLength)*(SteelStructure.BayWidth))
+                 EQL=(LOADS.EQL*(SteelStructure.BayLength)*(SteelStructure.BayWidth))
+                 RL=(LOADS.RL*(SteelStructure.BayLength)*(SteelStructure.BayWidth))
+                 SL=(LOADS.SL*(SteelStructure.BayLength)*(SteelStructure.BayWidth))
+                 WL=(LOADS.WL*(SteelStructure.BayLength)*(SteelStructure.BayWidth))
+             def FactoredAxialLoads(InteriorColLoads:InteriorColLoads):
+                 LC1=(1.4*InteriorColLoads.DL+(Bay1Roof[10].iloc[0]['PanSlabWeight']*math.ceil(SteelStructure.H4)))
+                 LC2=1.2*InteriorColLoads.DL+1.6*InteriorColLoads.LL+0.5*(max(InteriorColLoads.LRL,InteriorColLoads.SL))
+                 LC3=1.2*InteriorColLoads.DL+1.6*(max(InteriorColLoads.LRL,InteriorColLoads.SL))+0.5*InteriorColLoads.LL
+                 
+                 PU=max(LC1,LC2,LC3)
+                 
+                 return PU
+             PUint=FactoredAxialLoads(InteriorColLoads)/1000
+             KLRoof=math.ceil(StoreyHeight)
+             def SelectColumn(PUint,CDB):
+                 AppCols=CDB.loc[(CDB['KL']==KLRoof)]
+                 AppCols1=AppCols.loc[(AppCols['LRFD']>PUint)]
+                 EconCol=AppCols1.loc[(AppCols1['plf']==AppCols1['plf'].min())]
+                 return EconCol
+             CCol1=SelectColumn(PUint, CDB)
+             
+             
+             return CCol1
+        IntColumn=DesignInteriorColumn(SteelStructure, LOADS, CDB,StoreyHeight)
+        def DesignSlab(SteelStructure,FloorLoad1s,CS,DP):
+            def MLConst(FloorLoads:FloorLoads,DD):
+                #LC is Load Combo
+                LC1=FloorLoads.DL+DD-Bay1Roof[10].iloc[0]['PanSlabWeight']
+                LC2=FloorLoads.DL+DD+FloorLoads.Lconst
+                LC3=FloorLoads.DL+DD+max(FloorLoads.LRL,FloorLoads.SL,FloorLoads.RL)
+                LC4=FloorLoads.DL+DD+0.75*FloorLoads.Lconst+0.75*max(FloorLoads.LRL,FloorLoads.SL,FloorLoads.RL)
+                LC5=FloorLoads.DL+DD+max(FloorLoads.WL,FloorLoads.EQL)
+                LC6=FloorLoads.DL+DD+0.75*FloorLoads.Lconst+0.75*0.6*FloorLoads.WL+0.75*max(FloorLoads.LRL,FloorLoads.SL,FloorLoads.RL)
+                LC7=FloorLoads.DL+DD+0.75*FloorLoads.Lconst+0.75*0.75*FloorLoads.EQL+0.75*FloorLoads.SL
+                LC8=0.6*(FloorLoads.DL+DD)+0.6*FloorLoads.WL
+                LC9=0.6*(FloorLoads.DL+DD)+0.7*FloorLoads.EQL
+                return(max(LC1,LC2,LC3,LC4,LC5,LC6,LC7,LC8,LC9))
+            MaxConst=MLConst(FloorLoads(),0)
+            #start by finding the minimum slab thickness for the clear span 
+            def FindmminSlabT(CS,SteelStructure:SteelStructure()):
+                appslab=CS.loc[(CS['ClearSpan']>=SteelStructure.SpanBetweenJoist)]
+                removedummy=appslab.loc[(appslab['As']>0)]
+                minslabt=removedummy.loc[removedummy['SlabDepth']==removedummy['SlabDepth'].min()]
+                t=minslabt.iloc[0]['SlabDepth']
+                return t
+            tmin=FindmminSlabT(CS, SteelStructure)
+            
+      
+                
+            #Begin by finding deck type that is suitable
+            def FindSuitableDeck(SteelStructure:SteelStructure(),DP,MaxConst,tmin):
+                SDT=DP.loc[(DP['sdimax']>SteelStructure.SpanBetweenJoist)]
+                SDT1=SDT
+                SDT2=SDT1.loc[(SDT['Load']>MaxConst)]
+                if SteelStructure.SpanBetweenJoist <3:
+                    z=3
+                elif SteelStructure.SpanBetweenJoist >8:
+                    z=8
+                else:z=SteelStructure.SpanBetweenJoist
+                                 
+                SDT3=SDT2.loc[(SDT1['Span']==(z))]
+                SDT4=SDT3.loc[(SDT2['PanSlabWeight']==SDT3['PanSlabWeight'].min())]
+                SDT5=SDT4.loc[(SDT4['sdimax']==SDT4['sdimax'].max())]
+                
+                return SDT5
+            SDT5=FindSuitableDeck(SteelStructure, DP,MaxConst,tmin)
+            
+            MaxConstSW=MLConst(FloorLoads, SDT5.iloc[0]['PanSlabWeight'])
+            
+            
+            def CheckPan(SDT5,MaxConstSW):
+                if SDT5.iloc[0]['Load']>MaxConstSW:
+                    cheecks=6
+                else:
+                    cheecks=5
+                return cheecks
+            flaggers=CheckPan(SDT5, MaxConstSW)
+            
+            def loopypan(flaggers):
+                counter=0
+                while flaggers==5:
+                    newpan=FindSuitableDeck(SteelStructure, DP, MaxConstSW,tmin)
+                    newload=MLConst(FloorLoads, newpan.iloc[0]['PanSlabWeight'])
+                    flaggers=CheckPan(newload, newpan)
+                    if counter > 10000:
+                        break
+            
+                else:
+                    newpan=SDT5
+                    
+                    return newpan
+            SDT0=SDT5
+            def MLService(FloorLoads:FloorLoads,DD):
+                #LC is Load Combo
+                LC1=FloorLoads.DL+DD-Bay1Roof[10].iloc[0]['PanSlabWeight']
+                LC2=FloorLoads.DL+DD+FloorLoads.Lservice
+                LC3=FloorLoads.DL+DD+max(FloorLoads.LRL,FloorLoads.SL,FloorLoads.RL)
+                LC4=FloorLoads.DL+DD+0.75*FloorLoads.Lservice+0.75*max(FloorLoads.LRL,FloorLoads.SL,FloorLoads.RL)
+                LC5=FloorLoads.DL+DD+max(FloorLoads.WL,FloorLoads.EQL)
+                LC6=FloorLoads.DL+DD+0.75*FloorLoads.Lservice+0.75*0.6*FloorLoads.WL+0.75*max(FloorLoads.LRL,FloorLoads.SL,FloorLoads.RL)
+                LC7=FloorLoads.DL+DD+0.75*FloorLoads.Lservice+0.75*0.75*FloorLoads.EQL+0.75*FloorLoads.SL
+                LC8=0.6*(FloorLoads.DL+DD)+0.6*FloorLoads.WL
+                LC9=0.6*(FloorLoads.DL+DD)+0.7*FloorLoads.EQL
+                return(max(LC1,LC2,LC3,LC4,LC5,LC6,LC7,LC8,LC9))
+            MaxService=MLService(FloorLoads(),SDT0.iloc[0]['PanSlabWeight'])
+            
+            def FindSuitableSlab(CS,MaxService,SDT0):
+                s1=CS.loc[CS['dtype']==SDT0.iloc[0]['PanType']]
+                s2=s1.loc[(s1['ClearSpan']>=SteelStructure.SpanBetweenJoist)]
+                s3=s2.loc[(s2['ClearSpan']==s2['ClearSpan'].min())]
+                s4=s3
+                s5=s4.loc[(s2['slabload']>MaxService)]
+                s6=s5.loc[(s4['As']==s5['As'].min())]
+                return s6
+            Slab=FindSuitableSlab(CS, MaxService,SDT0)
+            def CheckSlab(Slab,MaxService):
+                if Slab.iloc[0]['WWF']=='99':
+                    
+                    flag=0
+                else:
+                    flag=1
+                    print('Slab Works!!')
+                    return flag 
+            slabflag=CheckSlab(Slab, MaxService)
+            
+            if slabflag==0:
+                def loopyslab(slabflag,tmin):
+                    counter=0
+                    while slabflag==0:
+                        tnew=tmin+0.5
+                        SDNEW=FindSuitableDeck(SteelStructure, DP,MaxConst,tnew)
+                        dloadnew=MLConst(FloorLoads, SDNEW.iloc[0]['PanSlabWeight'])
+                        PanFlag1=CheckPan(SDNEW, dloadnew)
+                        def loopypan1(PanFlag1):
+                            counter=0
+                            while PanFlag1==5:
+                                newpan=FindSuitableDeck(SteelStructure(),DP,dloadnew,tnew)
+                                newload=MLConst(FloorLoads, newpan.iloc[0]['PanSlabWeight'])
+                                PanFlag1=CheckPan(newpan, newload)
+                                if counter > 10:
+                                    break
+                
+                            else:
+                                newpan=SDNEW
+                                
+                                return newpan
+                        SDT1=loopypan1(PanFlag1)
+                        slabnew=FindSuitableSlab(CS, MaxService,SDT1)
+                        slabflag=CheckSlab(slabnew, MaxService)
+                        if counter > 10000:
+                            break
+                        return slabnew,SDT1
+                slab=loopyslab(slabflag, tmin)[0]
+                pan=loopyslab(slabflag, tmin)[1]
+            else:
+                slab=Slab
+                pan=SDT0
+                return slab,pan
+        FloorSlab=DesignSlab(SteelStructure,FloorLoads,CS,DP)[0]
+        FloorPan=DesignSlab(SteelStructure,FloorLoads,CS,DP)[1]
+        Bay1FloorJoist=ChosenRoofJoist
+        Bay1FloorPerPerBeam=ExteriorBeamPerpindicular
+        Bay1FloorPerParBeam=ExteriorBeamParallel
+        Bay1FloorIntPerBeam=InteriorBeamPerpindicular
+        Bay1FloorIntParBeam=InteriorBeamParallel
+        Bay1FloorCornerCol=CornerColumn
+        Bay1FloorWidthCol=WidthColumn
+        Bay1FloorIntCol=IntColumn
+        Bay1FloorLengthCol=LengthColumn
+        Bay1FloorPan=FloorPan
+        Bay1FloorSlab=FloorSlab
+        return Bay1FloorJoist,Bay1FloorPerPerBeam,Bay1FloorPerParBeam,Bay1FloorIntPerBeam,Bay1FloorIntParBeam,Bay1FloorCornerCol,Bay1FloorWidthCol,Bay1FloorIntCol,Bay1FloorLengthCol,Bay1FloorPan,Bay1FloorSlab
+    Bay1Floor=DesignBay1Floor(SteelStructure, LOADS, RDDF, JDF, BDF, CDB, CS, DP)
+    def DesignBay2R(Bay1Roof):
+        Roofpan=Bay1Roof[0]
+        RoofJoists=Bay1Roof[1]
+        Beam1=Bay1Roof[2]
+        Beam2=Bay1Roof[5]
+        Beam3=Bay1Roof[5]
+        Beam4=Bay1Roof[4]
+        Column1=Bay1Roof[9]
+        Column2=Bay1Roof[9]
+        Column3=Bay1Roof[8]
+        Column4=Bay1Roof[8]
+        FloorPan=Bay1Roof[10]
+        FloorSlab=Bay1Roof[11]
+        
+        return Roofpan, RoofJoists,Beam1,Beam2,Beam3,Beam4,Column1,Column2,Column3,Column4,FloorPan,FloorSlab
+    Bay2Roof=DesignBay2R(Bay1Roof)
+    def DesignBay2Floor(Bay1Floor): 
+        RoofJoists=Bay1Floor[0]
+        Beam1=Bay1Floor[1]
+        Beam2=Bay1Floor[4]
+        Beam3=Bay1Floor[4]
+        Beam4=Bay1Floor[3]
+        Column1=Bay1Floor[8]
+        Column2=Bay1Floor[8]
+        Column3=Bay1Floor[7]
+        Column4=Bay1Floor[7]
+        FloorPan=Bay1Floor[9]
+        FloorSlab=Bay1Floor[10]
+        
+        return RoofJoists,Beam1,Beam2,Beam3,Beam4,Column1,Column2,Column3,Column4,FloorPan,FloorSlab
+    Bay2Floor=DesignBay2Floor(Bay1Floor)
+    def DesignBay3R(Bay1Roof):
+        Roofpan=Bay1Roof[0]
+        RoofJoists=Bay1Roof[1]
+        Beam1=Bay1Roof[3]
+        Beam2=Bay1Roof[4]
+        Beam3=Bay1Roof[4]
+        Beam4=Bay1Roof[5]
+        Column1=Bay1Roof[7]
+        Column2=Bay1Roof[7]
+        Column3=Bay1Roof[8]
+        Column4=Bay1Roof[8]
+        FloorPan=Bay1Roof[10]
+        FloorSlab1=Bay1Roof[11]
+        return Roofpan, RoofJoists,Beam1,Beam2,Beam3,Beam4,Column1,Column2,Column3,Column4,FloorPan,FloorSlab1
+    Bay3Roof=DesignBay3R(Bay1Roof)
+    def DesignBay3Floor(Bay1Floor): 
+        RoofJoists=Bay1Floor[0]
+        Beam1=Bay1Floor[2]
+        Beam2=Bay1Floor[3]
+        Beam3=Bay1Floor[3]
+        Beam4=Bay1Floor[4]
+        Column1=Bay1Floor[6]
+        Column2=Bay1Floor[6]
+        Column3=Bay1Floor[7]
+        Column4=Bay1Floor[7]
+        FloorPan=Bay1Floor[9]
+        FloorSlab=Bay1Floor[10]
+        
+        return RoofJoists,Beam1,Beam2,Beam3,Beam4,Column1,Column2,Column3,Column4,FloorPan,FloorSlab
+    Bay3Floor=DesignBay3Floor(Bay1Floor)
+    def DesignBay4R(Bay1Roof):
+        Roofpan=Bay1Roof[0]
+        RoofJoists=Bay1Roof[1]
+        Beam1=Bay1Roof[3]
+        Beam2=Bay1Roof[3]
+        Beam3=Bay1Roof[4]
+        Beam4=Bay1Roof[4]
+        Column1=Bay1Roof[8]
+        Column2=Bay1Roof[8]
+        Column3=Bay1Roof[8]
+        Column4=Bay1Roof[8]
+        FloorPan=Bay1Roof[10]
+        FloorSlab=Bay1Roof[11]
+        return Roofpan, RoofJoists,Beam1,Beam2,Beam3,Beam4,Column1,Column2,Column3,Column4,FloorPan,FloorSlab
+    Bay4Roof=DesignBay4R(Bay1Roof)
+    def DesignBay4Floor(Bay1Floor): 
+        RoofJoists=Bay1Floor[0]
+        Beam1=Bay1Floor[2]
+        Beam2=Bay1Floor[2]
+        Beam3=Bay1Floor[3]
+        Beam4=Bay1Floor[3]
+        Column1=Bay1Floor[7]
+        Column2=Bay1Floor[7]
+        Column3=Bay1Floor[7]
+        Column4=Bay1Floor[7]
+        FloorPan=Bay1Floor[9]
+        FloorSlab=Bay1Floor[10]
+        
+        return RoofJoists,Beam1,Beam2,Beam3,Beam4,Column1,Column2,Column3,Column4,FloorPan,FloorSlab
+    Bay4Floor=DesignBay4Floor(Bay1Floor)
+    
+    return  Bay1Roof,Bay2Roof,Bay3Roof,Bay4Roof ,Bay1Floor,Bay2Floor,Bay3Floor,Bay4Floor  
+Steel=DesignSteel(SteelStructure, RoofLoads, FloorLoads, RDDF, JDF, BDF, CDB, CS, DP)    
+def ExtractWeightR(Steel,x):
+    NJ=math.ceil(SteelStructure.BayLength/SteelStructure.SpanBetweenJoist)
+    PanWeight=(Steel[x][0].DeckWeight)*SteelStructure.BayLength*SteelStructure.BayWidth
+    JoistWeight=(Steel[x][1].Weight*SteelStructure.BayWidth*NJ).values
+    Beam1=(Steel[x][2].Weight*SteelStructure.BayWidth).values
+    Beam2=(Steel[x][3].Weight*SteelStructure.BayLength).values
+    Beam3=(Steel[x][4].Weight*SteelStructure.BayWidth).values
+    Beam4=(Steel[x][5].Weight*SteelStructure.BayLength).values
+    Col1=(Steel[x][6].plf*SteelStructure.H1).values
+    Col2=(Steel[x][7].plf*SteelStructure.H1).values
+    Col3=(Steel[x][8].plf*SteelStructure.H1).values
+    Col4=(Steel[x][7].plf*SteelStructure.H1).values
+    RoofWeight=(Steel[x][10].PanSlabWeight*SteelStructure.BayLength*SteelStructure.BayWidth).values
+    FloorWeight=(Steel[x][11].SlabDepth.min()/12)*145*SteelStructure.BayLength*SteelStructure.BayWidth
+    TotalConc=(FloorWeight+0.8*RoofWeight)
+    TotalSteel=(PanWeight+JoistWeight+Beam1+Beam2+Beam3+Beam4+Col1+Col2+Col3+Col4)
+    return TotalConc,TotalSteel
+RoofBay1=ExtractWeightR(Steel,0)
+RoofBay2=ExtractWeightR(Steel,1)
+RoofBay3=ExtractWeightR(Steel,2)
+RoofBay4=ExtractWeightR(Steel,3)
+
+def ExtractWeight(Steel,x):
+    NJ=math.ceil(SteelStructure.BayLength/SteelStructure.SpanBetweenJoist)
+    Joist=(Steel[x][0].Weight*SteelStructure.BayWidth*NJ).values
+    Beam1=(Steel[x][1].Weight*SteelStructure.BayLength).values
+    Beam2=(Steel[x][2].Weight*SteelStructure.BayWidth).values
+    Beam3=(Steel[x][3].Weight*SteelStructure.BayLength).values
+    Beam4=(Steel[x][4].Weight*SteelStructure.BayWidth).values
+    Col1=(Steel[x][5].plf*SteelStructure.H1).values
+    Col2=(Steel[x][6].plf*SteelStructure.H1).values
+    Col3=(Steel[x][7].plf*SteelStructure.H1).values
+    Col4=(Steel[x][8].plf*SteelStructure.H1).values
+    FloorPan=0.2*(Steel[x][9].PanSlabWeight*SteelStructure.BayLength*SteelStructure.BayWidth).values
+    FloorSlab=((Steel[x][10].SlabDepth.min()/12)*145*SteelStructure.BayLength*SteelStructure.BayWidth)
+    TotalConc=FloorSlab
+    TotalSteel=Joist+Beam1+Beam2+Beam3+Beam4+Col1+Col2+Col3+Col4+FloorPan
+    return TotalConc,TotalSteel
+FloorBay1=ExtractWeight(Steel, 4)
+FloorBay2=ExtractWeight(Steel, 5)
+FloorBay3=ExtractWeight(Steel, 6)
+FloorBay4=ExtractWeight(Steel, 7)
+RoofWeightS=(4*RoofBay1[1])+(LengthBays*RoofBay2[1])+(WidthBays*RoofBay3[1])+(IntBays*RoofBay4[1])
+FloorWeightsC=(Floors-1)*((4*FloorBay1[0])+(LengthBays*FloorBay2[0])+(WidthBays*FloorBay3[0])+(IntBays*FloorBay4[0]))    
+FloorWeightsS=(Floors-1)*((4*FloorBay1[1][1])+(LengthBays*FloorBay2[1][1])+(WidthBays*FloorBay3[1][1])+(IntBays*FloorBay4[1][1]))    
+TotalConc=FloorWeightsC
+TotalSteel=RoofWeightS+FloorWeightsS
+TotalBuilding=TotalConc+TotalSteel  
+ConcLB=TotalConc/(Floors*(BuildingL*BuildingW))   #lb/ft2 
+StLB=TotalSteel/(Floors*(BuildingL*BuildingW))    #lb/ft2  
+BldgTOT=TotalBuilding/(Floors*(BuildingL*BuildingW))
+ConcKG=TotalConc*0.453592/(Floors*(BuildingL*BuildingW)*0.0929)   #kg/m2 
+StKG=TotalSteel*0.453592/(Floors*(BuildingL*BuildingW)*0.0929)    #kg/m2 
+BldgTOTKG=TotalBuilding*0.453592/(Floors*(BuildingL*BuildingW)*0.0929)    #kg/m2 
+#%%
+# load the data
+with open("filtered_data_ft.pkl", "rb") as f:
+    # Use pickle.load() to read the data from the file
+    WidthsFilteredFt, LengthsFilteredFt, HtsFilteredFT = pickle.load(f)
+
+
+#Building Length, Width, Height
+# Generate histogram data
+widths = np.array(WidthsFilteredFt)
+lengths = np.array(LengthsFilteredFt)
+heights = np.array(HtsFilteredFT)
+
+# Compute the KDE for each variable
+widths_kde = gaussian_kde(widths)
+lengths_kde = gaussian_kde(lengths)
+heights_kde = gaussian_kde(heights)
+
+# Evaluate the KDE at a fine-grained set of points
+n_points = 1000
+widths_grid = np.linspace(min(widths), max(widths), n_points)
+lengths_grid = np.linspace(min(lengths), max(lengths), n_points)
+heights_grid = np.linspace(min(heights), max(heights), n_points)
+
+widths_kde_vals = widths_kde(widths_grid)
+lengths_kde_vals = lengths_kde(lengths_grid)
+heights_kde_vals = heights_kde(heights_grid)
+
+# Resample the histogram data using the KDE density estimate
+widths_resampled = widths_kde.resample(len(widths)).flatten()
+lengths_resampled = lengths_kde.resample(len(lengths)).flatten()
+heights_resampled = heights_kde.resample(len(heights)).flatten()
+#%%
+#Monte Carlo 
+Weightkgm2 = []
+ConcWeight=[]
+mean_results = []
+variance_results=[]
+SBJs=np.arange(2, 4.25, 0.25)
+baydims=range(8, 51, 1) 
+baycnt=range(2,21,1)
+ll=range(40,101,1)
+
+
+
+for i in range(5000):
+        # Sample a random value from lengths_resampled
+        BaylLength1=np.random.choice(baydims)
+        BayWidth1=np.random.choice(baydims)
+        livey=np.random.choice(ll)
+        LengthBays11=np.random.choice(baycnt)      
+        WidthBays11=np.random.choice(baycnt)    
+        BuildingL1=LengthBays11*BaylLength1
+        BuildingW1=WidthBays11*BayWidth1
+        IntBays11=(WidthBays11-1)*(LengthBays11-1)
+        SS=SteelStructure
+        RL=RoofLoads
+        SBJ1=np.random.choice(SBJs)
+        SS.SpanBetweenJoist=SBJ1 
+        SS.BayLength=BaylLength1
+        SS.BayWidth=BayWidth1
+        RL.LL=livey 
+        Steel0=DesignSteel(SS, RL, FloorLoads, RDDF, JDF, BDF, CDB, CS, DP, 4) 
+        RoofBay10=ExtractWeightR(Steel0,0)
+        RoofBay20=ExtractWeightR(Steel0,1)
+        RoofBay30=ExtractWeightR(Steel0,2)
+        RoofBay40=ExtractWeightR(Steel0,3)
+        FloorBay10=ExtractWeight(Steel, 4)
+        FloorBay20=ExtractWeight(Steel0, 5)
+        FloorBay30=ExtractWeight(Steel0, 6)
+        FloorBay40=ExtractWeight(Steel0, 7)
+        RoofWeightS1=(4*RoofBay10[1])+(LengthBays11*RoofBay20[1])+(WidthBays11*RoofBay30[1])+(IntBays11*RoofBay40[1])
+        FloorWeightsC1=(SteelStructure.NumberOfStoreys-1)*((4*FloorBay10[0])+(LengthBays11*FloorBay20[0])+(WidthBays11*FloorBay30[0])+(IntBays11*FloorBay40[0]))    
+        FloorWeightsS1=(SteelStructure.NumberOfStoreys-1)*((4*FloorBay10[1][1])+(LengthBays11*FloorBay20[1][1])+(WidthBays11*FloorBay30[1][1])+(IntBays11*FloorBay40[1][1]))    
+        TotalConc1=FloorWeightsC1
+        TotalSteel1=RoofWeightS1+FloorWeightsS1
+        TotalBuilding1=TotalConc1+TotalSteel1  
+        ConcKG1=TotalConc1*0.453592/(4*(BuildingL1*BuildingW1)*0.0929)   #kg/m2 
+        StKG1=TotalSteel1*0.453592/(4*(BuildingL1*BuildingW1)*0.0929)    #kg/m2 
+        BldgTOTKG1=((TotalBuilding1*0.453592/(4*(BuildingL1*BuildingW1)*0.0929)))  #kg/m2
+        
+        Weightkgm2.append(BldgTOTKG1)
+        ConcWeight.append(ConcKG1)
+        mean = sum(Weightkgm2) / len(Weightkgm2)
+        mean_results.append(mean)
+        variance = sum((x - mean)**2 for x in Weightkgm2) / len(Weightkgm2)
+        variance_results.append(variance)
+        
+
+
+
+
+data=np.array(Weightkgm2,dtype=float)
+plt.xlabel('Structural Mass of Steel Gravity Frame (Kg/m2)')
+plt.ylabel('Frequency')
+plt.hist(data,bins=300)
+plt.xlim(0,300)
+plt.show()
+
+np.mean(data)
+np.median(data)
+math.sqrt(np.var(data))
+np.percentile(data,20)
+np.percentile(data,80)
+
+data1=np.array(ConcWeight,dtype=float)
+plt.xlabel('Structural Mass of Concrete - Steel Gravity Frame (Kg/m2)')
+plt.ylabel('Frequency')
+plt.hist(data1,bins=300)
+plt.xlim(0,300)
+plt.show()
+
+np.mean(data1)
+np.median(data1)
+math.sqrt(np.var(data1))
+np.percentile(data1,20)
+np.percentile(data1,80)
+#Monte Carlo 
+EC=[] 
+EC2=[]
+EC3=[]
+SBJs=np.arange(2, 4.25, 0.25)
+baydims=range(8, 51, 1) 
+baycnt=range(2,21,1)
+ll=range(40,101,1)
+x1=0.608
+x2=0.13
+x11=0.93
+x22=0.162
+x111=1.24
+x222=0.194
+
+
+for i in range(5000):
+        # Sample a random value from lengths_resampled
+        BaylLength1=np.random.choice(baydims)
+        BayWidth1=np.random.choice(baydims)
+        livey=np.random.choice(ll)
+        LengthBays11=np.random.choice(baycnt)      
+        WidthBays11=np.random.choice(baycnt)    
+        BuildingL1=LengthBays11*BaylLength1
+        BuildingW1=WidthBays11*BayWidth1
+        IntBays11=(WidthBays11-1)*(LengthBays11-1)
+        SS=SteelStructure
+        RL=RoofLoads
+        SBJ1=np.random.choice(SBJs)
+        SS.SpanBetweenJoist=SBJ1 
+        SS.BayLength=BaylLength1
+        SS.BayWidth=BayWidth1
+        RL.LL=livey 
+        Steel0=DesignSteel(SS, RL, FloorLoads, RDDF, JDF, BDF, CDB, CS, DP, 4) 
+        RoofBay10=ExtractWeightR(Steel0,0)
+        RoofBay20=ExtractWeightR(Steel0,1)
+        RoofBay30=ExtractWeightR(Steel0,2)
+        RoofBay40=ExtractWeightR(Steel0,3)
+        FloorBay10=ExtractWeight(Steel, 4)
+        FloorBay20=ExtractWeight(Steel0, 5)
+        FloorBay30=ExtractWeight(Steel0, 6)
+        FloorBay40=ExtractWeight(Steel0, 7)
+        RoofWeightS1=(4*RoofBay10[1])+(LengthBays11*RoofBay20[1])+(WidthBays11*RoofBay30[1])+(IntBays11*RoofBay40[1])
+        FloorWeightsC1=(SteelStructure.NumberOfStoreys-1)*((4*FloorBay10[0])+(LengthBays11*FloorBay20[0])+(WidthBays11*FloorBay30[0])+(IntBays11*FloorBay40[0]))    
+        FloorWeightsS1=(SteelStructure.NumberOfStoreys-1)*((4*FloorBay10[1][1])+(LengthBays11*FloorBay20[1][1])+(WidthBays11*FloorBay30[1][1])+(IntBays11*FloorBay40[1][1]))    
+        TotalConc1=FloorWeightsC1
+        TotalSteel1=RoofWeightS1+FloorWeightsS1
+        TotalBuilding1=TotalConc1+TotalSteel1  
+        ConcKG1=TotalConc1*0.453592/(4*(BuildingL1*BuildingW1)*0.0929)   #kg/m2 
+        StKG1=TotalSteel1*0.453592/(4*(BuildingL1*BuildingW1)*0.0929)    #kg/m2 
+        
+        EC1=ConcKG1*x2+StKG1*x1
+        EC22=ConcKG1*x22+StKG1*x11
+        EC33=ConcKG1*x222+StKG1*x111
+        EC.append(EC1)
+        EC2.append(EC22)
+        EC3.append(EC33)
+        
+        
+        
+
+        
+
+
+
+
+data=np.array(EC,dtype=float) #Achievable Embodied Carbon Kg/m2
+data2=np.array(EC2,dtype=float) #Average Embodied Carbon Kg/m2
+data3=np.array(EC3,dtype=float) #Conservative Embodied Carbon Kg/m2
+
+
+# ... (previous code)
+
+# Plotting histograms
+plt.figure(figsize=(10, 6))
+
+# Histogram for EC (Achievable Embodied Carbon)
+plt.hist(data, bins=300, label='Achievable Embodied Carbon',alpha=0.8)
+
+# Histogram for EC2 (Average Embodied Carbon)
+plt.hist(data2, bins=300, label='Average Embodied Carbon',alpha=0.5)
+
+# Histogram for EC3 (Conservative Embodied Carbon)
+plt.hist(data3, bins=300, label='Conservative Embodied Carbon',alpha=0.5)
+
+plt.xlabel('Embodied Carbon of Steel Gravity Frame (KgCO2e/m2)')
+plt.ylabel('Frequency')
+plt.xlim(0, 300)
+plt.legend()
+plt.show()
+
+
+np.mean(data)
+np.median(data)
+math.sqrt(np.var(data))
+np.percentile(data,20)
+np.percentile(data,80)
+
+np.mean(data2)
+np.median(data2)
+math.sqrt(np.var(data2))
+np.percentile(data2,20)
+np.percentile(data2,80)
+    
+        
+np.mean(data3)
+np.median(data3)
+math.sqrt(np.var(data3))
+np.percentile(data3,20)
+np.percentile(data3,80)     
+    
+
+achievable_ecS = np.array(EC, dtype=float)
+average_ecS = np.array(EC2, dtype=float)
+conservative_ecS = np.array(EC3, dtype=float)
+    
+np.savez('data_arrays.npz', achievable_ecS=achievable_ecS, average_ecS=average_ecS, conservative_ecS=conservative_ecS)   
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Created on Fri Dec  2 10:38:41 2022
+
+@author: ahmad
+"""
+import pandas as pd
+import math as math
+import numpy as np
+import matplotlib.pyplot as plt
+BarDB=pd.read_csv('/Users/ahmad/Documents/Thesis/Thesis DataFrames/RebarDataBase.csv')
+
+class ConcreteStructure:
+    BayLength=20
+    BayWidth=20
+    ClearSpanBeam=60 #in
+    SupportCondition='BothEndContinuous'
+    ClearCover=0.75
+    BeamWidth=14 #in
+    VerticalLn=(BayLength*12)-BeamWidth
+    fc=4000 #psi
+    fy=60000 #ksi 
+    bw=6 #in
+    StoreyHeight=12
+    NoFloors=4
+class Loads:
+    DL=10
+    LL=80
+    SL=15
+    RL=0
+    LRL=25
+    EQL=0
+    WL=0
+    
+def DesignConcSlab(ConcreteStructure:ConcreteStructure(),Loads:Loads()): 
+    class ConcreteStructure:
+        BayLength=ConcreteStructure.BayLength
+        BayWidth=ConcreteStructure.BayWidth
+        ClearSpanBeam=ConcreteStructure.ClearSpanBeam
+        SupportCondition=ConcreteStructure.SupportCondition
+        ClearCover=ConcreteStructure.ClearCover
+        BeamWidth=ConcreteStructure.BeamWidth #in
+        VerticalLn=ConcreteStructure.VerticalLn
+        fc=ConcreteStructure.fc #psi
+        fy=ConcreteStructure.fy #ksi 
+        bw=ConcreteStructure.bw #in
+    class Loads:
+        DL=Loads.DL
+        LL=Loads.LL
+        SL=Loads.SL
+        RL=Loads.RL
+        LRL=Loads.LRL
+        EQL=Loads.EQL
+        WL=Loads.WL
+        
+    def Findtmin(ConcreteStructure:ConcreteStructure()):
+        if ConcreteStructure.SupportCondition=="SimplySupported":
+            hmin=ConcreteStructure.ClearSpanBeam/20
+        elif ConcreteStructure.SupportCondition=="OneEndContinuous":
+            hmin=ConcreteStructure.ClearSpanBeam/24
+        elif ConcreteStructure.SupportCondition=="BothEndContinuous":
+            hmin=ConcreteStructure.ClearSpanBeam/28
+        elif ConcreteStructure.SupportCondition=="Cantilever":
+            hmin=ConcreteStructure.ClearSpanBeam/10
+        return hmin
+    
+    tfmin=Findtmin(ConcreteStructure()) #in 
+    
+    def CalculateTmin(tfmin,ConcreteStructure:ConcreteStructure(),x,y):
+        TotalTmin=2*ConcreteStructure.ClearCover+BarDB.iloc[x]['BarDiameter']+BarDB.iloc[y]['BarDiameter']
+        return TotalTmin
+    
+    TF=CalculateTmin(tfmin, ConcreteStructure(),0,0)
+    
+    def CheckTF(tfmin,TF):
+        if TF>=tfmin:
+            tflag=1
+        else:
+            tflag=0
+        return tflag
+    
+    tflag=CheckTF(tfmin, TF)
+    
+    def loopslab(tflag,TF):  
+        y = 0
+        counter=0
+        while tflag==0:
+            TF=CalculateTmin(tfmin, ConcreteStructure(),0,y)
+            tflag=CheckTF(tfmin, TF)  
+            y=y+1
+            counter=counter+1
+            if counter>1000:
+                break
+        return TF,counter,y
+    TF=loopslab(tflag,TF)[0]
+    def GetAsMin(TF,ConcreteStructure:ConcreteStructure()):
+        Asmin=0.0018*TF*ConcreteStructure.bw
+        return Asmin
+    Asmin=GetAsMin(TF, ConcreteStructure())
+    MaxSpacing=3*TF
+    Asmin=0.11*(12/MaxSpacing)
+    def GetLoads(Loads:Loads(),TF,ConcreteStructure:ConcreteStructure()):
+        DLplf=(((TF/ConcreteStructure.bw)*(145))+(Loads.DL*ConcreteStructure.bw/12))
+        LLplf=(Loads.LL*ConcreteStructure.bw/12)
+        return DLplf, LLplf
+    PLFS=GetLoads(Loads, TF, ConcreteStructure)
+    Wu=max(1.2*PLFS[0]+1.6*PLFS[1],1.4*PLFS[0])
+    MaxMNeg=Wu*(ConcreteStructure.ClearSpanBeam**2)/(11*12)
+    MaxMPos=Wu*(ConcreteStructure.ClearSpanBeam**2)/(16*12)
+    
+    def Findverticalpos(MaxMNeg,MaxMPos,TF):
+        ratio=MaxMPos/MaxMNeg
+        Dneg=ratio*TF
+        Dpos=TF-Dneg
+        return Dneg, Dpos
+    Dpos=Findverticalpos(MaxMNeg,MaxMPos,TF)[1]
+    Dneg=Findverticalpos(MaxMNeg,MaxMPos,TF)[0]
+    
+    def FindBeta1(ConcreteStructure:ConcreteStructure()):
+        if ConcreteStructure.fc>=8000:
+            b1=0.65
+        elif 2500 < ConcreteStructure.fc < 4000:
+            b1=0.85
+        else:
+            b1=0.85-(0.05*((ConcreteStructure.fc-4000)/(1000)))
+            
+            return b1
+    b1=FindBeta1(ConcreteStructure())
+    
+    a=(Asmin*ConcreteStructure.fy)/(0.85*ConcreteStructure.fc*ConcreteStructure.bw) 
+    c=a/b1
+    EpslonNeg=(0.003/c)*(Dneg-c)
+    EpslonPos=(0.003/c)*(Dpos-c)
+    
+    def CheckTensionalControlled(EpslonNeg,EpslonPos):
+        if (EpslonNeg>0.005 and EpslonPos>0.005):
+            Flag=1
+        else: 
+            Flag=0
+            
+        return Flag
+    TCflag=CheckTensionalControlled(EpslonNeg, EpslonPos)
+    def LoopTC(TCflag,TF):   
+        y = loopslab(tflag,TF)[2]
+        TF1=TF
+        counter=0
+        while TCflag==0:
+            TF1=CalculateTmin(tfmin, ConcreteStructure(),0,y)
+            PLFS=GetLoads(Loads, TF, ConcreteStructure)
+            Wu=1.2*PLFS[0]+1.6*PLFS[1]
+            MaxMNeg=Wu*(ConcreteStructure.ClearSpanBeam**2)/(11*12)
+            MaxMPos=Wu*(ConcreteStructure.ClearSpanBeam**2)/(16*12)
+            Dpos=Findverticalpos(MaxMNeg,MaxMPos,TF1)[1]
+            Dneg=Findverticalpos(MaxMNeg,MaxMPos,TF1)[0]
+            EpslonNeg1=(0.003/c)*(Dneg-c)
+            EpslonPos1=(0.003/c)*(Dpos-c)
+            TCflag=CheckTensionalControlled(EpslonNeg1, EpslonPos1)
+            y=y+1
+            if y>10:
+                y=10
+            else:
+                y=y
+            counter=counter+1
+            if counter>1000:
+                break
+        return TF1
+    TF=LoopTC(TCflag, TF)
+    PLFS=GetLoads(Loads, TF, ConcreteStructure)
+    Wu=max(1.2*PLFS[0]+1.6*PLFS[1],1.4*PLFS[0])
+    MaxMNeg=Wu*(ConcreteStructure.ClearSpanBeam**2)/(11*12)
+    MaxMPos=Wu*(ConcreteStructure.ClearSpanBeam**2)/(16*12)
+    Dpos=Findverticalpos(MaxMNeg,MaxMPos,TF)[1]
+    Dneg=Findverticalpos(MaxMNeg,MaxMPos,TF)[0]
+    EpslonNeg=(0.003/c)*(Dneg-c)
+    EpslonPos=(0.003/c)*(Dpos-c)
+    fmnNeg=(0.9*(Asmin*ConcreteStructure.fy)*(Dneg-0.5*a))
+    fmnPos=0.9*(Asmin*ConcreteStructure.fy)*(Dpos-0.5*a)
+    
+    def CheckMoment(MaxMNeg,MaxMPos,fmnNeg,fmnPos):
+        if (fmnNeg>MaxMNeg and fmnPos>MaxMPos):
+            Flag=1
+        else:
+            Flag=0
+        return Flag
+    MFlag=CheckMoment(MaxMNeg, MaxMPos, fmnNeg, fmnPos)
+    
+    def LoopMoment(MFlag,Asmin):
+        Asmin1=Asmin
+        counter=0
+        while MFlag==0:
+            fmnNeg1=0.9*(Asmin1*ConcreteStructure.fy)*(Dneg-0.5*a)
+            fmnPos1=0.9*(Asmin1*ConcreteStructure.fy)*(Dpos-0.5*a)
+            MFlag=CheckMoment(MaxMNeg, MaxMPos, fmnNeg1, fmnPos1)
+            Asmin1=Asmin1+0.11
+            counter=counter+1
+            if counter>1000:
+                break
+        return Asmin1
+    Asmin=LoopMoment(MFlag, Asmin)
+    fmnNeg=0.9*(Asmin*ConcreteStructure.fy)*(Dneg-0.5*a)
+    fmnPos=0.9*(Asmin*ConcreteStructure.fy)*(Dpos-0.5*a)
+    
+    AS=Asmin+(0.11*(12/5*TF))
+    SlabThickness=TF
+    return AS,SlabThickness,Dpos
+AreaofSlabSteel=DesignConcSlab(ConcreteStructure(),Loads())[0]
+SlabThickness=DesignConcSlab(ConcreteStructure(),Loads())[1]
+SlabBarY=DesignConcSlab(ConcreteStructure(),Loads())[2]
+def designconcjoist(ConcreteStructure:ConcreteStructure(),Loads:Loads()):
+    class ConcreteStructure:
+        BayLength=ConcreteStructure.BayLength
+        BayWidth=ConcreteStructure.BayWidth
+        ClearSpanBeam=ConcreteStructure.ClearSpanBeam
+        SupportCondition=ConcreteStructure.SupportCondition
+        ClearCover=ConcreteStructure.ClearCover
+        BeamWidth=ConcreteStructure.BeamWidth #in
+        VerticalLn=ConcreteStructure.VerticalLn
+        fc=ConcreteStructure.fc #psi
+        fy=ConcreteStructure.fy #ksi 
+        bw=ConcreteStructure.bw #in
+    class Loads:
+        DL=Loads.DL
+        LL=Loads.LL
+        SL=Loads.SL
+        RL=Loads.RL
+        LRL=Loads.LRL
+        EQL=Loads.EQL
+        WL=Loads.WL
+    class JoistInfo:
+        Ln=((ConcreteStructure.BayLength)-1)*12
+        CSDeck=ConcreteStructure.ClearSpanBeam
+    
+    hjoist=math.ceil(JoistInfo.Ln/21)
+    bjoist=4
+    
+    def getjoistloads(hjoist,bjoist,Loads:Loads()):
+        ag=hjoist*bjoist+(JoistInfo.CSDeck)*SlabThickness
+        agft=ag/144
+        dplf=(agft*145)+Loads.DL*(JoistInfo.CSDeck+bjoist)/12
+        lplf=Loads.LL*(JoistInfo.CSDeck+bjoist)/12
+        wu=max(1.4*dplf,1.2*dplf+1.6*lplf)
+        return wu 
+    WU=getjoistloads(hjoist, bjoist, Loads)
+    
+    def GetMu(WU,JoistInfo:JoistInfo()):
+        MaxMNeg=WU*(JoistInfo.Ln**2)/(11*12)
+        MaxMPos=WU*(JoistInfo.Ln**2)/(16*12)
+        return MaxMNeg,MaxMPos
+    Msupport=GetMu(WU, JoistInfo())[0]
+    Mmidspan=GetMu(WU, JoistInfo())[1]
+    
+    def GetBarY(SlabBarY,x,BarDB,hjoist,SlabThickness):
+        dpos=hjoist-0.75-BarDB.iloc[x]['BarDiameter']
+        ypos=dpos
+        yneg=SlabBarY+BarDB.iloc[x]['BarDiameter']
+        dneg=hjoist-yneg
+        return dpos,dneg,ypos,yneg
+    dpos=GetBarY(SlabBarY, 0, BarDB, hjoist, SlabThickness)[0]
+    dneg=GetBarY(SlabBarY, 0, BarDB, hjoist, SlabThickness)[1]
+    
+    def FindBeta1(ConcreteStructure:ConcreteStructure()):
+         if ConcreteStructure.fc>=8000:
+             b1=0.65
+         elif 2500 < ConcreteStructure.fc < 4000:
+             b1=0.85
+         else:
+             b1=0.85-(0.05*((ConcreteStructure.fc-4000)/(1000)))
+             
+             return b1
+    b1=FindBeta1(ConcreteStructure())
+    AsPos=2*BarDB.iloc[0]['BarArea']
+    Asneg=2*BarDB.iloc[0]['BarArea']
+    dpos=GetBarY(SlabBarY, 0, BarDB, hjoist, SlabThickness)[0]
+    dneg=GetBarY(SlabBarY, 0, BarDB, hjoist, SlabThickness)[1]
+    Bpos=JoistInfo.CSDeck+bjoist
+    Bneg=bjoist
+    apos=(AsPos*ConcreteStructure.fy)/(0.85*ConcreteStructure.fc*Bpos)
+    aneg=(Asneg*ConcreteStructure.fy)/(0.85*ConcreteStructure.fc*Bneg) 
+    cpos=apos/b1
+    cneg=aneg/b1
+    EpslonNeg=(0.003/cneg)*(dneg-cneg)
+    EpslonPos=(0.003/cpos)*(dpos-cpos)
+    def CheckTensionalControlled(EpslonNeg,EpslonPos):
+         if (EpslonNeg>0.005 and EpslonPos>0.005):
+             Flag=1
+         else: 
+             Flag=0
+             
+         return Flag
+    TCflag=CheckTensionalControlled(EpslonNeg, EpslonPos)
+    def LoopTC(TCflag,hjoist):   
+        x = 0
+        hjoist1=hjoist
+        counter=0
+        while TCflag==0:
+            hjoist1=hjoist1+1
+            dpos=GetBarY(SlabBarY, x, BarDB, hjoist1, SlabThickness)[0]
+            dneg=GetBarY(SlabBarY, x, BarDB, hjoist1, SlabThickness)[1]
+            EpslonNeg1=(0.003/cneg)*(dneg-cneg)
+            EpslonPos1=(0.003/cpos)*(dpos-cpos)
+            TCflag=CheckTensionalControlled(EpslonNeg1, EpslonPos1)
+            x=x+1
+            counter=counter+1
+            if counter>1000:
+                break
+        return hjoist1
+    hjoist=LoopTC(TCflag, hjoist)
+    WU=getjoistloads(hjoist, bjoist, Loads)                 
+    Msupport=GetMu(WU, JoistInfo())[0]
+    Mmidspan=GetMu(WU, JoistInfo())[1]
+    dpos=GetBarY(SlabBarY, 0, BarDB, hjoist, SlabThickness)[0]
+    dneg=GetBarY(SlabBarY, 0, BarDB, hjoist, SlabThickness)[1]
+    fmnNeg=(0.9*(Asneg*ConcreteStructure.fy)*(dneg-0.5*aneg))
+    fmnPos=0.9*(AsPos*ConcreteStructure.fy)*(dpos-0.5*apos)
+    
+    def CheckMoment(Msupport,Mmidspan,fmnNeg,fmnPos):
+         if (fmnNeg>Msupport and fmnPos>Mmidspan):
+             Flag=1
+         else:
+             Flag=0
+         return Flag
+    MFlag=CheckMoment(Msupport, Mmidspan, fmnNeg, fmnPos)
+    def LoopMoment(MFlag,AsPos,Asneg):
+         AsPos1=AsPos
+         Asneg1=Asneg
+         x=0
+         y=0
+         counter=0
+         while MFlag==0:
+             AsPos1=2*BarDB.iloc[x]['BarArea']
+             Asneg1=2*BarDB.iloc[y]['BarArea']
+             fmnNeg1=0.9*(Asneg1*ConcreteStructure.fy)*(dneg-0.5*aneg)
+             fmnPos1=0.9*(AsPos1*ConcreteStructure.fy)*(dpos-0.5*apos)
+             MFlag=CheckMoment(Msupport, Mmidspan, fmnNeg1, fmnPos1)
+             x=x+1
+             y=y+1
+             counter=counter+1
+             if counter>1000:
+                 break
+         return AsPos1,Asneg1
+    PositiveSteel=LoopMoment(MFlag, AsPos, Asneg)[0]
+    NegativeSteel=LoopMoment(MFlag, AsPos, Asneg)[1]
+    
+    return hjoist,bjoist,PositiveSteel,NegativeSteel
+hjoist=designconcjoist(ConcreteStructure, Loads)[0]
+bjoist=designconcjoist(ConcreteStructure, Loads)[1]
+JoistArea=designconcjoist(ConcreteStructure, Loads)[0]*designconcjoist(ConcreteStructure, Loads)[1]
+JoistSteelArea=designconcjoist(ConcreteStructure, Loads)[2]+designconcjoist(ConcreteStructure, Loads)[3]
+NJ=math.ceil(ConcreteStructure.BayWidth/(ConcreteStructure.ClearSpanBeam/12))
+#BeamDesign
+def designconcbeams(ConcreteStructure:ConcreteStructure(),Loads:Loads()):
+    class ConcreteStructure:
+        BayLength=ConcreteStructure.BayLength
+        BayWidth=ConcreteStructure.BayWidth
+        ClearSpanBeam=ConcreteStructure.ClearSpanBeam
+        SupportCondition=ConcreteStructure.SupportCondition
+        ClearCover=ConcreteStructure.ClearCover
+        BeamWidth=ConcreteStructure.BeamWidth #in
+        VerticalLn=ConcreteStructure.VerticalLn
+        fc=ConcreteStructure.fc #psi
+        fy=ConcreteStructure.fy #ksi 
+        bw=ConcreteStructure.bw #in
+    class Loads:
+        DL=Loads.DL
+        LL=Loads.LL
+        SL=Loads.SL
+        RL=Loads.RL
+        LRL=Loads.LRL
+        EQL=Loads.EQL
+        WL=Loads.WL
+    def GetLoadsPerp(JoistArea,SlabThickness,Loads:Loads(),ConcreteStructure:ConcreteStructure(),Wall):
+        NJ=math.ceil(ConcreteStructure.BayWidth/(ConcreteStructure.ClearSpanBeam/12))
+        SlabDpli=0.087*SlabThickness*ConcreteStructure.BayLength*12
+        Lpli=(Loads.LL/144)*ConcreteStructure.BayLength*12
+        Dpli=(Loads.DL/144)*ConcreteStructure.BayLength*12
+        JoistDpli=0.087*(JoistArea)*NJ
+        WD=SlabDpli+JoistDpli+Wall+Dpli
+        WL=Lpli
+        Wu=max(1.4*WD,1.2*WD+1.6*WL)
+        MaxMNeg=Wu*((ConcreteStructure.BayWidth*12)**2)/11
+        MaxMPos=Wu*((ConcreteStructure.BayWidth*12)**2)/16
+        return MaxMNeg, MaxMPos
+    MUpdpos=GetLoadsPerp(JoistArea, SlabThickness, Loads, ConcreteStructure,0)[1]
+    MUpdneg=GetLoadsPerp(JoistArea, SlabThickness, Loads, ConcreteStructure,0)[0]
+    def GetloadsPar(SlabThickness,Loads:Loads(),ConcreteStructure:ConcreteStructure(),Wall):
+        SlabDpli=0.087*SlabThickness*ConcreteStructure.BayWidth*12
+        Lpli=(Loads.LL/144)*ConcreteStructure.BayWidth*12
+        Dpli=(Loads.DL/144)*ConcreteStructure.BayWidth*12
+        WD=SlabDpli+Wall+Dpli
+        WL=Lpli
+        Wu=max(1.4*WD,1.2*WD+1.6*WL)
+        MaxMNeg=Wu*((ConcreteStructure.BayLength*12)**2)/11
+        MaxMPos=Wu*((ConcreteStructure.BayLength*12)**2)/16
+        return MaxMNeg, MaxMPos
+    MUpapos=GetloadsPar(SlabThickness, Loads, ConcreteStructure,0)[1]
+    MUpaneg=GetloadsPar(SlabThickness, Loads, ConcreteStructure,0)[0]
+    def FindBeta1(ConcreteStructure:ConcreteStructure()):
+         if ConcreteStructure.fc>=8000:
+             b1=0.65
+         elif 2500 < ConcreteStructure.fc < 4000:
+             b1=0.85
+         else:
+             b1=0.85-(0.05*((ConcreteStructure.fc-4000)/(1000)))
+             
+             return b1
+    b1=FindBeta1(ConcreteStructure())
+    hmin=math.ceil(ConcreteStructure.BayLength*12/18.5)
+    Bw=math.ceil((2/3)*hmin)
+    d=hmin-3
+    c=d*3/8
+    a=c*b1
+    bneg=Bw
+    bpos=Bw+(16*SlabThickness)
+    compneg=0.85*ConcreteStructure.fc*a*bneg
+    comppos=0.85*ConcreteStructure.fc*a*bpos
+    fmnNeg=0.9*compneg*(d-0.5*a)
+    fmnPos=0.9*comppos*(d-0.5*a)
+    #1 perpendicular perimeter
+    def checkPer1(fmnNeg,fmnPos,MUpdpos,MUpdneg):
+        if(fmnNeg<MUpdneg or fmnPos<MUpdpos):
+            Flag=0
+        else:
+            Flag=1
+        return Flag
+    flag1=checkPer1(fmnNeg, fmnPos, MUpdpos, MUpdneg)
+    def loop1(flag1,hmin):
+        hmin1=hmin
+        Bw1=math.ceil((2/3)*hmin1)
+        counter=0
+        while flag1==0:
+            hmin1=hmin1
+            Bw1=math.ceil((2/3)*hmin1)
+            d=hmin1-3
+            c=d*3/8
+            a=c*b1
+            bneg=Bw1
+            bpos=Bw1+(16*SlabThickness)
+            compneg=0.85*ConcreteStructure.fc*a*bneg
+            comppos=0.85*ConcreteStructure.fc*a*bpos
+            fmnNeg=0.9*compneg*(d-0.5*a)
+            fmnPos=0.9*comppos*(d-0.5*a)
+            flag1=checkPer1(fmnNeg, fmnPos, MUpdpos, MUpdneg)
+            hmin1=hmin1+1
+            counter=counter+1
+            if counter>1000:
+                break 
+        return hmin1,Bw1
+    hmin1=loop1(flag1, hmin)[0]
+    bw1=loop1(flag1, hmin)[1]  
+    d1=hmin1-3
+    c1=d1*3/8
+    a1=c1*b1
+    bneg1=bw1
+    bpos1=bw1+(16*SlabThickness)
+    compneg1=0.85*ConcreteStructure.fc*a1*bneg1
+    comppos1=0.85*ConcreteStructure.fc*a1*bpos1
+    fmnNeg1=0.9*compneg1*(d1-0.5*a1)
+    fmnPos1=0.9*comppos1*(d1-0.5*a1)
+    #CompScaled
+    CompScaledNeg1=(MUpdneg/fmnNeg1)*compneg1
+    CompScaledPos1=(MUpdpos/fmnPos1)*comppos1
+    AsNeg1=CompScaledNeg1/60000
+    AsPos1=CompScaledPos1/60000
+    apos1=CompScaledPos1/(0.85*ConcreteStructure.fc*bpos1)
+    fmnNeg1=0.9*((AsNeg1*60000*(hmin1-0.75-0.375-0.3))-(0.85*ConcreteStructure.fc*bneg1*a1*a1*0.5))
+    fmnPos1=0.9*((AsPos1*60000*(hmin1-0.75-0.375-0.3))-(0.85*ConcreteStructure.fc*bpos1*apos1*apos1*0.5))
+    BeamPerInt=(hmin1,bw1,AsPos1,AsNeg1)
+    ##
+    #2 Per beam
+    MUpdpos2=0.5*GetLoadsPerp(JoistArea, SlabThickness, Loads, ConcreteStructure,39)[1]
+    MUpdneg2=0.5*GetLoadsPerp(JoistArea, SlabThickness, Loads, ConcreteStructure,39)[0]
+    def checkPer2(fmnNeg,fmnPos,MUpdpos2,MUpdneg2):
+        if(fmnNeg<MUpdneg or fmnPos<MUpdpos):
+            Flag=0
+        else:
+            Flag=1
+        return Flag
+    flag2=checkPer1(fmnNeg, fmnPos, MUpdpos2, MUpdneg2)
+    def loop2(flag2,hmin):
+        hmin2=hmin
+        counter=0
+        Bw2=math.ceil((2/3)*hmin2)
+        while flag2==0:
+            hmin2=hmin2
+            Bw2=math.ceil((2/3)*hmin2)
+            d=hmin2-3
+            c=d*3/8
+            a=c*b1
+            bneg=Bw2
+            bpos=Bw2+(16*SlabThickness)
+            compneg=0.85*ConcreteStructure.fc*a*bneg
+            comppos=0.85*ConcreteStructure.fc*a*bpos
+            fmnNeg=0.9*compneg*(d-0.5*a)
+            fmnPos=0.9*comppos*(d-0.5*a)
+            flag2=checkPer1(fmnNeg, fmnPos, MUpdpos2, MUpdneg2)
+            hmin2=hmin2+1
+            counter=counter+1
+            if counter>1000:
+                break 
+        return hmin2,Bw2
+    hmin2=loop2(flag2, hmin)[0]
+    bw2=loop2(flag2, hmin)[1]  
+    d2=hmin2-3
+    c2=d2*3/8
+    a2=c2*b1
+    bneg2=bw2
+    bpos2=bw2+(16*SlabThickness)
+    compneg2=0.85*ConcreteStructure.fc*a2*bneg2
+    comppos2=0.85*ConcreteStructure.fc*a2*bpos2
+    fmnNeg2=0.9*compneg2*(d2-0.5*a2)
+    fmnPos2=0.9*comppos2*(d2-0.5*a2)
+    #CompScaled
+    CompScaledNeg2=(MUpdneg2/fmnNeg2)*compneg2
+    CompScaledPos2=(MUpdpos2/fmnPos2)*comppos2
+    AsNeg2=CompScaledNeg2/60000
+    AsPos2=CompScaledPos2/60000
+    apos2=CompScaledPos2/(0.85*ConcreteStructure.fc*bpos2)
+    fmnNeg2=0.9*((AsNeg2*60000*(hmin2-0.75-0.375-0.3))-(0.85*ConcreteStructure.fc*bneg2*a2*a2*0.5))
+    fmnPos2=0.9*((AsPos2*60000*(hmin2-0.75-0.375-0.3))-(0.85*ConcreteStructure.fc*bpos2*apos2*apos2*0.5))
+    BeamPerExt=(hmin2,bw2,AsPos2,AsNeg2)
+    ##
+    #1 par beam 
+    def checkPar1(fmnNeg,fmnPos,MUpapos,MUpaneg):
+        if(fmnNeg<MUpaneg or fmnPos<MUpapos):
+            Flag=0
+        else:
+            Flag=1
+        return Flag
+    flag3=checkPar1(fmnNeg, fmnPos, MUpapos, MUpaneg)
+    def loop3(flag3,hmin):
+        hmin3=hmin
+        Bw3=math.ceil((2/3)*hmin3)
+        counter=0
+        while flag3==0:
+            hmin3=hmin3
+            Bw3=math.ceil((2/3)*hmin3)
+            d=hmin3-3
+            c=d*3/8
+            a=c*b1
+            bneg=Bw3
+            bpos=Bw3+(16*SlabThickness)
+            compneg=0.85*ConcreteStructure.fc*a*bneg
+            comppos=0.85*ConcreteStructure.fc*a*bpos
+            fmnNeg=0.9*compneg*(d-0.5*a)
+            fmnPos=0.9*comppos*(d-0.5*a)
+            flag3=checkPar1(fmnNeg, fmnPos, MUpapos, MUpaneg)
+            hmin3=hmin3+1
+            counter=counter+1
+            if counter>1000:
+                break 
+        return hmin3,Bw3
+    hmin3=loop3(flag3, hmin)[0]
+    bw3=loop3(flag3, hmin)[1]  
+    d3=hmin3-3
+    c3=d3*3/8
+    a3=c3*b1
+    bneg3=bw3
+    bpos3=bw3+(16*SlabThickness)
+    compneg3=0.85*ConcreteStructure.fc*a3*bneg3
+    comppos3=0.85*ConcreteStructure.fc*a3*bpos3
+    fmnNeg3=0.9*compneg3*(d3-0.5*a3)
+    fmnPos3=0.9*comppos3*(d3-0.5*a3)
+    #CompScaled
+    CompScaledNeg3=(MUpaneg/fmnNeg3)*compneg3
+    CompScaledPos3=(MUpapos/fmnPos3)*comppos3
+    AsNeg3=CompScaledNeg3/60000
+    AsPos3=CompScaledPos3/60000
+    apos3=CompScaledPos3/(0.85*ConcreteStructure.fc*bpos3)
+    fmnNeg3=0.9*((AsNeg3*60000*(hmin3-0.75-0.375-0.3))-(0.85*ConcreteStructure.fc*bneg3*a3*a3*0.5))
+    fmnPos3=0.9*((AsPos3*60000*(hmin3-0.75-0.375-0.3))-(0.85*ConcreteStructure.fc*bpos3*apos3*apos3*0.5))
+    BeamParInt=(hmin3,bw3,AsPos3,AsNeg3)
+    ##
+    #2 par beam 
+    MUpapos2=0.5*GetloadsPar(SlabThickness, Loads, ConcreteStructure,39)[1]
+    MUpaneg2=0.5*GetloadsPar(SlabThickness, Loads, ConcreteStructure,39)[0]
+    
+    def checkPar2(fmnNeg,fmnPos,MUpapos2,MUpaneg2):
+        if(fmnNeg<MUpaneg2 or fmnPos<MUpapos2):
+            Flag=0
+        else:
+            Flag=1
+        return Flag
+    flag4=checkPar2(fmnNeg, fmnPos, MUpapos2, MUpaneg2)
+    def loop4(flag4,hmin):
+        hmin4=hmin
+        Bw4=math.ceil((2/3)*hmin4)
+        counter=0
+        while flag4==0:
+            hmin4=hmin4
+            Bw4=math.ceil((2/3)*hmin4)
+            d=hmin4-3
+            c=d*3/8
+            a=c*b1
+            bneg=Bw4
+            bpos=Bw4+(16*SlabThickness)
+            compneg=0.85*ConcreteStructure.fc*a*bneg
+            comppos=0.85*ConcreteStructure.fc*a*bpos
+            fmnNeg=0.9*compneg*(d-0.5*a)
+            fmnPos=0.9*comppos*(d-0.5*a)
+            flag4=checkPar2(fmnNeg, fmnPos, MUpapos, MUpaneg)
+            hmin4=hmin4+1
+            counter=counter+1
+            if counter>1000:
+                break 
+        return hmin4,Bw4
+    hmin4=loop4(flag4, hmin)[0]
+    bw4=loop4(flag4, hmin)[1]  
+    d4=hmin4-3
+    c4=d4*3/8
+    a4=c4*b1
+    bneg4=bw4
+    bpos4=bw4+(16*SlabThickness)
+    compneg4=0.85*ConcreteStructure.fc*a4*bneg4
+    comppos4=0.85*ConcreteStructure.fc*a4*bpos4
+    fmnNeg4=0.9*compneg4*(d4-0.5*a4)
+    fmnPos4=0.9*comppos4*(d4-0.5*a4)
+    #CompScaled
+    CompScaledNeg4=(MUpaneg2/fmnNeg4)*compneg4
+    CompScaledPos4=(MUpapos2/fmnPos4)*comppos4
+    AsNeg4=CompScaledNeg4/60000
+    AsPos4=CompScaledPos4/60000
+    apos4=CompScaledPos4/(0.85*ConcreteStructure.fc*bpos4)
+    fmnNeg4=0.9*((AsNeg4*60000*(hmin4-0.75-0.375-0.3))-(0.85*ConcreteStructure.fc*bneg4*a4*a4*0.5))
+    fmnPos4=0.9*((AsPos4*60000*(hmin4-0.75-0.375-0.3))-(0.85*ConcreteStructure.fc*bpos4*apos4*apos4*0.5))
+    BeamParExt=(hmin4,bw4,AsPos4,AsNeg4)
+    
+    return BeamPerInt,BeamPerExt,BeamParInt,BeamParExt
+Beams=designconcbeams(ConcreteStructure, Loads)
+#0~IntPer
+#1~ExtPer
+#2~IntPar
+#2~ExtPar
+
+       
+#Col Design 
+def designcols(Loads:Loads(),ConcreteStructure:ConcreteStructure(),Beams,JoistArea,SlabThickness):
+    class ConcreteStructure:
+        BayLength=ConcreteStructure.BayLength
+        BayWidth=ConcreteStructure.BayWidth
+        ClearSpanBeam=ConcreteStructure.ClearSpanBeam
+        SupportCondition=ConcreteStructure.SupportCondition
+        ClearCover=ConcreteStructure.ClearCover
+        BeamWidth=ConcreteStructure.BeamWidth #in
+        VerticalLn=ConcreteStructure.VerticalLn
+        fc=ConcreteStructure.fc #psi
+        fy=ConcreteStructure.fy #ksi 
+        bw=ConcreteStructure.bw #in
+    class Loads:
+        DL=Loads.DL
+        LL=Loads.LL
+        SL=Loads.SL
+        RL=Loads.RL
+        LRL=Loads.LRL
+        EQL=Loads.EQL
+        WL=Loads.WL
+    #1-Interior Col
+    #2-Length Column Parallel beam full 
+    #3-Width column Perperndicular beam full
+    #4 Corner Column 
+    NJ=math.ceil(ConcreteStructure.BayWidth/(ConcreteStructure.ClearSpanBeam/12))
+    IntPerBeam=(Beams[0][0]*Beams[0][1]/144)*145*ConcreteStructure.BayWidth #lbs
+    ExtPerBeam=(Beams[1][0]*Beams[1][1]/144)*145*ConcreteStructure.BayWidth #lbs
+    IntParBeam=(Beams[2][0]*Beams[2][1]/144)*145*ConcreteStructure.BayLength #lbs
+    ExtParBeam=(Beams[3][0]*Beams[3][1]/144)*145*ConcreteStructure.BayLength #lbs
+    Joist=(JoistArea/144)*145*ConcreteStructure.BayLength
+    TA1=ConcreteStructure.BayLength*ConcreteStructure.BayWidth
+    TA2=ConcreteStructure.BayLength*(0.5*ConcreteStructure.BayWidth)
+    TA3=0.5*ConcreteStructure.BayLength*ConcreteStructure.BayWidth
+    TA4=0.5*ConcreteStructure.BayLength*0.5*ConcreteStructure.BayWidth
+    SlabPsf=(SlabThickness/12)*145
+    
+    
+    Pu1=max(1.4*(IntParBeam+IntPerBeam+SlabPsf*TA1+NJ*Joist+Loads.DL*TA1),1.2*(IntParBeam+IntPerBeam+SlabPsf*TA1+NJ*Joist+Loads.DL*TA1)+1.6*Loads.LL*TA1)+500000
+    Pu2=max(1.4*(ExtParBeam+0.5*IntPerBeam+SlabPsf*TA2+NJ*Joist+Loads.DL*TA2),1.2*(ExtParBeam+0.5*IntPerBeam+SlabPsf*TA2+NJ*Joist+Loads.DL*TA2)+1.6*Loads.LL*TA2)+300000
+    Pu3=max(1.4*(0.5*IntParBeam+ExtPerBeam+SlabPsf*TA3+NJ*Joist+Loads.DL*TA3),1.2*((0.5*IntParBeam+ExtPerBeam+SlabPsf*TA3+NJ*Joist+Loads.DL*TA3)+1.6*Loads.LL*TA3))+300000
+    Pu4=max(1.4*(0.5*ExtParBeam+0.5*ExtPerBeam+SlabPsf*TA4+NJ*Joist+Loads.DL*TA4),1.2*(0.5*ExtParBeam+0.5*ExtPerBeam+SlabPsf*TA4+NJ*Joist+Loads.DL*TA4)+1.6*Loads.LL*TA4)+200000
+    #1
+    bcol1=10 #in 
+    acol1=bcol1**2
+    ascol1=0.01*acol1
+    pcol1=0.9*((0.85*ConcreteStructure.fc*(acol1-ascol1))+60000*ascol1)
+    def CheckCol1(pcol1,Pu1):
+        if pcol1<Pu1:
+            Flag=0
+        else:
+            Flag=1
+        return Flag
+    flag1=CheckCol1(pcol1, Pu1)
+    def loop1(flag1,bcol1):
+        bcol11=bcol1
+        counter=0
+        while flag1==0:
+            bcol11=bcol11 #in 
+            acol1=bcol11**2
+            ascol1=0.01*acol1
+            pcol1=0.9*((0.85*ConcreteStructure.fc*(acol1-ascol1))+60000*ascol1)
+            flag1=CheckCol1(pcol1, Pu1)
+            bcol11=bcol11+1
+            counter=counter+1
+            if counter>1000:
+                break
+        return bcol11
+    bcol1=loop1(flag1, bcol1)
+    acol1=bcol1**2
+    ascol1=0.01*acol1
+    IntCol=(bcol1,ascol1)
+    #2
+    bcol2=10 #in 
+    acol2=bcol2**2
+    ascol2=0.01*acol2
+    pcol2=0.9*((0.85*ConcreteStructure.fc*(acol2-ascol2))+60000*ascol2)
+    def CheckCol2(pcol2,Pu2):
+        if pcol2<Pu2:
+            Flag=0
+        else:
+            Flag=1
+        return Flag
+    flag2=CheckCol2(pcol2, Pu2)
+    def loop2(flag2,bcol2):
+        bcol22=bcol2
+        counter=0
+        while flag2==0:
+            bcol22=bcol22 #in 
+            acol2=bcol22**2
+            ascol2=0.01*acol2
+            pcol2=0.9*((0.85*ConcreteStructure.fc*(acol2-ascol2))+60000*ascol2)
+            flag2=CheckCol2(pcol2, Pu2)
+            bcol22=bcol22+1
+            counter=counter+1
+            if counter>1000:
+                break
+        return bcol22
+    bcol2=loop2(flag2, bcol2)
+    acol2=bcol2**2
+    ascol2=0.01*acol2
+    LengthCol=(bcol2,ascol2)
+    #3
+    bcol3=10 #in 
+    acol3=bcol3**2
+    ascol3=0.01*acol3
+    pcol3=0.9*((0.85*ConcreteStructure.fc*(acol3-ascol3))+60000*ascol3)
+    def CheckCol3(pcol3,Pu3):
+        if pcol3<Pu3:
+            Flag=0
+        else:
+            Flag=1
+        return Flag
+    flag3=CheckCol3(pcol3, Pu3)
+    def loop3(flag3,bcol3):
+        bcol33=bcol3
+        counter=0
+        while flag3==0:
+            bcol33=bcol33 #in 
+            acol3=bcol33**2
+            ascol3=0.01*acol3
+            pcol3=0.9*((0.85*ConcreteStructure.fc*(acol3-ascol3))+60000*ascol3)
+            flag3=CheckCol3(pcol3, Pu3)
+            bcol33=bcol33+1
+            counter=counter+1
+            if counter>1000:
+                break
+        return bcol33
+    bcol3=loop3(flag3, bcol3)
+    acol3=bcol3**2
+    ascol3=0.01*acol3
+    WidthCol=(bcol3,ascol3)
+    #4
+    bcol4=10 #in 
+    acol4=bcol4**2
+    ascol4=0.01*acol4
+    pcol4=0.9*((0.85*ConcreteStructure.fc*(acol4-ascol4))+60000*ascol4)
+    def CheckCol4(pcol4,Pu4):
+        if pcol4<Pu4:
+            Flag=0
+        else:
+            Flag=1
+        return Flag
+    flag4=CheckCol3(pcol4, Pu4)
+    def loop4(flag4,bcol4):
+        bcol44=bcol4
+        counter=0
+        while flag4==0:
+            bcol44=bcol44 #in 
+            acol4=bcol44**2
+            ascol4=0.01*acol4
+            pcol4=0.9*((0.85*ConcreteStructure.fc*(acol4-ascol4))+60000*ascol4)
+            flag4=CheckCol4(pcol4, Pu4)
+            bcol44=bcol44+1
+            counter=counter+1
+            if counter>1000:
+                break
+        return bcol44
+    bcol4=loop4(flag4, bcol4)
+    acol4=bcol4**2
+    ascol4=0.01*acol4
+    CornerCol=(bcol4,ascol4)
+    
+    return IntCol,LengthCol,WidthCol,CornerCol
+Columns=designcols(Loads, ConcreteStructure, Beams, JoistArea, SlabThickness)
+#0~Int
+#1~Length
+#2~Width
+#3~Corner
+
+class concweights:
+    IntCol=((Columns[0][0]**2)/144)*145*ConcreteStructure.StoreyHeight*ConcreteStructure.NoFloors
+    LengthCol=((Columns[1][0]**2)/144)*145*ConcreteStructure.StoreyHeight*ConcreteStructure.NoFloors
+    WidthCol=((Columns[2][0]**2)/144)*145*ConcreteStructure.StoreyHeight*ConcreteStructure.NoFloors
+    CornerCol=((Columns[3][0]**2)/144)*145*ConcreteStructure.StoreyHeight*ConcreteStructure.NoFloors
+    IPDBeam=((Beams[0][0]*Beams[0][1])/144)*145*ConcreteStructure.BayWidth
+    EPDBeam=((Beams[1][0]*Beams[1][1])/144)*145*ConcreteStructure.BayWidth
+    IPABeam=((Beams[2][0]*Beams[2][1])/144)*145*ConcreteStructure.BayLength
+    EPABeam=((Beams[3][0]*Beams[3][1])/144)*145*ConcreteStructure.BayLength
+    Joists=(JoistArea/144)*145*ConcreteStructure.BayLength*NJ
+    Slab=(SlabThickness/12)*145*ConcreteStructure.BayLength*ConcreteStructure.BayWidth
+class steelweights:
+    Slab=(((AreaofSlabSteel)*3.4)*ConcreteStructure.BayLength*ConcreteStructure.BayWidth)
+    IntCol=(Columns[0][1]*3.4)*ConcreteStructure.StoreyHeight*ConcreteStructure.NoFloors
+    LengthCol=(Columns[1][1]*3.4)*ConcreteStructure.StoreyHeight*ConcreteStructure.NoFloors
+    WidthCol=(Columns[2][1]*3.4)*ConcreteStructure.StoreyHeight*ConcreteStructure.NoFloors
+    CornerCol=(Columns[3][1]*3.4)*ConcreteStructure.StoreyHeight*ConcreteStructure.NoFloors
+    IPDBeam=(Beams[0][2]+Beams[0][3])*3.4*ConcreteStructure.BayWidth
+    EPDBeam=(Beams[1][0]+Beams[1][3])*3.4*ConcreteStructure.BayWidth
+    IPABeam=(Beams[2][0]+Beams[2][3])*3.4*ConcreteStructure.BayLength
+    EPABeam=(Beams[3][2]+Beams[3][0])*3.4*ConcreteStructure.BayLength
+    Joists=NJ*(JoistSteelArea*3.4)*ConcreteStructure.BayLength
+class totalweights:
+    Slab=steelweights.Slab+concweights.Slab
+    IntCol=steelweights.IntCol+concweights.IntCol
+    LengthCol=steelweights.LengthCol+concweights.LengthCol
+    WidthCol=steelweights.WidthCol+concweights.WidthCol
+    CornerCol=steelweights.CornerCol+concweights.CornerCol
+    IPDBeam=steelweights.IPDBeam+concweights.IPDBeam
+    EPDBeam=steelweights.EPDBeam+concweights.EPDBeam
+    IPABeam=steelweights.IPABeam+concweights.IPABeam
+    EPABeam=steelweights.EPABeam+concweights.EPABeam
+    Joists=steelweights.Joists+concweights.Joists
+class BayWeights:
+    Bay1=totalweights.Slab+totalweights.IntCol+totalweights.CornerCol+totalweights.LengthCol+totalweights.WidthCol+totalweights.IPDBeam+totalweights.EPDBeam+totalweights.IPABeam+totalweights.EPABeam
+    Bay2=totalweights.Slab+2*totalweights.LengthCol+2*totalweights.IntCol+2*totalweights.IPDBeam+totalweights.EPABeam+totalweights.IPABeam
+    Bay3=totalweights.Slab+2*totalweights.WidthCol+2*totalweights.IntCol+2*totalweights.IPABeam+totalweights.EPDBeam+totalweights.IPDBeam
+    Bay4=totalweights.Slab+4*totalweights.IntCol+2*totalweights.IPDBeam+2*totalweights.IPABeam
+
+class BayWeightsConc:
+    Bay1=concweights.Slab+concweights.IntCol+concweights.CornerCol+concweights.LengthCol+concweights.WidthCol+concweights.IPDBeam+concweights.EPDBeam+concweights.IPABeam+concweights.EPABeam
+    Bay2=concweights.Slab+concweights.LengthCol+concweights.IntCol+concweights.IPDBeam+concweights.EPABeam+concweights.IPABeam
+    Bay3=concweights.Slab+concweights.WidthCol+concweights.IntCol+concweights.IPABeam+concweights.EPDBeam+concweights.IPDBeam
+    Bay4=concweights.Slab+concweights.IntCol+concweights.IPDBeam+concweights.IPABeam
+class BayWeightsSteel:
+    Bay1=steelweights.Slab+steelweights.IntCol+steelweights.CornerCol+steelweights.LengthCol+steelweights.WidthCol+steelweights.IPDBeam+steelweights.EPDBeam+steelweights.IPABeam+steelweights.EPABeam
+    Bay2=steelweights.Slab+2*steelweights.LengthCol+2*steelweights.IntCol+2*steelweights.IPDBeam+steelweights.EPABeam+steelweights.IPABeam
+    Bay3=steelweights.Slab+2*steelweights.WidthCol+2*steelweights.IntCol+2*steelweights.IPABeam+steelweights.EPDBeam+steelweights.IPDBeam
+    Bay4=steelweights.Slab+4*steelweights.IntCol+2*steelweights.IPDBeam+2*steelweights.IPABeam
+
+
+
+BuildingL=100
+BuildingW=100
+LengthBays= BuildingL/ConcreteStructure.BayLength   
+WidthBays=5
+IntBays=(WidthBays-1)*(LengthBays-1)
+BuildingWeight=ConcreteStructure.NoFloors*(BayWeights.Bay1+LengthBays*BayWeights.Bay2+WidthBays*BayWeights.Bay3+IntBays*BayWeights.Bay4)
+ConcWeight=ConcreteStructure.NoFloors*(4*BayWeightsConc.Bay1+LengthBays*BayWeightsConc.Bay2+WidthBays*BayWeightsConc.Bay3+IntBays*BayWeightsConc.Bay4)
+SteelWeight=ConcreteStructure.NoFloors*(BayWeightsSteel.Bay1+LengthBays*BayWeightsSteel.Bay2+WidthBays*BayWeightsSteel.Bay3+IntBays*BayWeightsSteel.Bay4)
+
+aaConBerC=ConcWeight*0.453592/(ConcreteStructure.NoFloors*(BuildingL*BuildingW)*0.0929) 
+aaSTBerC=SteelWeight*0.453592/(ConcreteStructure.NoFloors*(BuildingL*BuildingW)*0.0929)    
+    
+#%%
+#Monte Carlo
+
+
+mean_results = []
+variance_results = []
+TotWeightkgm2=[]
+Rebar=[]
+conc=[]
+
+SBJs=np.arange(2, 4.25, 0.25)
+baydims=range(8, 50, 1) 
+baycnt=range(1,21,1)
+ll=range(40,101,1)
+FFc=range(4000, 7001, 500)
+floors=range(1,10,1)
+
+
+
+for i in range(5000):
+            # Sample a random value from lengths_resampled
+            floor=np.random.choice(floors)
+            BaylLength1=np.random.choice(baydims)
+            BayWidth1=np.random.choice(baydims)
+            livey=np.random.choice(ll)
+            LengthBays11=np.random.choice(baycnt)      
+            WidthBays11=np.random.choice(baycnt)    
+            BuildingL1=LengthBays11*BaylLength1
+            BuildingW1=WidthBays11*BayWidth1
+            IntBays11=(WidthBays11-1)*(LengthBays11-1)
+            CS=ConcreteStructure
+            L=Loads
+            SBJ1=np.random.choice(SBJs)
+            CS.fc=np.random.choice(FFc)
+            CS.ClearSpanBeam=(SBJ1*12) 
+            CS.BayLength=BaylLength1
+            CS.BayWidth=BayWidth1
+            L.LL=livey 
+            ##
+            AreaofSlabSteel1=DesignConcSlab(CS,L)[0]
+            SlabThickness1=DesignConcSlab(CS,L)[1]
+            SlabBarY=DesignConcSlab(CS,L)[2]
+            hjoist=designconcjoist(CS, L)[0]
+            bjoist=designconcjoist(CS, L)[1]
+            JoistArea1=designconcjoist(CS, L)[0]*designconcjoist(CS, L)[1]
+            JoistSteelArea1=designconcjoist(CS, L)[2]+designconcjoist(CS, L)[3]
+            NJ1=math.ceil(CS.BayWidth/(CS.ClearSpanBeam/12))
+            Beams1=designconcbeams(CS, L)
+            Columns1=designcols(L, CS, Beams1, JoistArea1, SlabThickness1)
+            class concweights1:
+                IntCol=((Columns1[0][0]**2)/144)*145*CS.StoreyHeight*floor
+                LengthCol=((Columns1[1][0]**2)/144)*145*CS.StoreyHeight*floor
+                WidthCol=((Columns1[2][0]**2)/144)*145*CS.StoreyHeight*floor
+                CornerCol=((Columns1[3][0]**2)/144)*145*CS.StoreyHeight*floor
+                IPDBeam=((Beams1[0][0]*Beams1[0][1])/144)*145*BayWidth1
+                EPDBeam=((Beams1[1][0]*Beams1[1][1])/144)*145*BayWidth1
+                IPABeam=((Beams1[2][0]*Beams1[2][1])/144)*145*BaylLength1
+                EPABeam=((Beams1[3][0]*Beams1[3][1])/144)*145*BaylLength1
+                Joists=(JoistArea1/144)*145*BaylLength1*NJ1
+                Slab=(SlabThickness1/12)*145*BaylLength1*BayWidth1
+            class steelweights1:
+                Slab=(((AreaofSlabSteel)*3.4)*CS.BayLength*CS.BayWidth)
+                IntCol=(Columns1[0][1]*3.4)*CS.StoreyHeight*floor
+                LengthCol=(Columns1[1][1]*3.4)*CS.StoreyHeight*floor
+                WidthCol=(Columns1[2][1]*3.4)*CS.StoreyHeight*floor
+                CornerCol=(Columns1[3][1]*3.4)*CS.StoreyHeight*floor
+                IPDBeam=(Beams1[0][2]+Beams1[0][3])*3.34*CS.BayWidth
+                EPDBeam=(Beams1[1][0]+Beams1[1][3])*3.34*CS.BayWidth
+                IPABeam=(Beams1[2][0]+Beams1[2][3])*3.34*CS.BayLength
+                EPABeam=(Beams1[3][2]+Beams1[3][0])*3.34*CS.BayLength
+                Joists=NJ1*(JoistSteelArea1*3.34)*CS.BayLength
+            class totalweights1:
+                Slab=steelweights1.Slab+concweights1.Slab
+                IntCol=steelweights1.IntCol+concweights1.IntCol
+                LengthCol=steelweights1.LengthCol+concweights1.LengthCol
+                WidthCol=steelweights1.WidthCol+concweights1.WidthCol
+                CornerCol=steelweights1.CornerCol+concweights1.CornerCol
+                IPDBeam=steelweights1.IPDBeam+concweights1.IPDBeam
+                EPDBeam=steelweights1.EPDBeam+concweights1.EPDBeam
+                IPABeam=steelweights1.IPABeam+concweights1.IPABeam
+                EPABeam=steelweights1.EPABeam+concweights1.EPABeam
+                Joists=steelweights1.Joists+concweights1.Joists
+            class BayWeights1:
+                Bay1=totalweights1.Slab+totalweights1.IntCol+totalweights1.CornerCol+totalweights1.LengthCol+totalweights1.WidthCol+totalweights1.IPDBeam+totalweights1.EPDBeam+totalweights1.IPABeam+totalweights1.EPABeam
+                Bay2=totalweights1.Slab+2*totalweights1.LengthCol+2*totalweights1.IntCol+2*totalweights1.IPDBeam+totalweights1.EPABeam+totalweights1.IPABeam
+                Bay3=totalweights1.Slab+2*totalweights1.WidthCol+2*totalweights1.IntCol+2*totalweights1.IPABeam+totalweights1.EPDBeam+totalweights1.IPDBeam
+                Bay4=totalweights1.Slab+4*totalweights1.IntCol+2*totalweights1.IPDBeam+2*totalweights1.IPABeam
+            class BayWeightsConc1:
+                Bay1=concweights1.Slab+concweights1.IntCol+concweights1.CornerCol+concweights1.LengthCol+concweights1.WidthCol+concweights1.IPDBeam+concweights1.EPDBeam+concweights1.IPABeam+concweights1.EPABeam
+                Bay2=concweights1.Slab+concweights1.LengthCol+concweights1.IntCol+concweights1.IPDBeam+concweights1.EPABeam+concweights1.IPABeam
+                Bay3=concweights1.Slab+concweights1.WidthCol+concweights1.IntCol+concweights1.IPABeam+concweights1.EPDBeam+concweights1.IPDBeam
+                Bay4=concweights1.Slab+concweights1.IntCol+concweights1.IPDBeam+concweights1.IPABeam
+            class BayWeightsSteel1:
+                Bay1=steelweights1.Slab+steelweights1.IntCol+steelweights1.CornerCol+steelweights1.LengthCol+steelweights1.WidthCol+steelweights1.IPDBeam+steelweights1.EPDBeam+steelweights1.IPABeam+steelweights1.EPABeam
+                Bay2=steelweights1.Slab+steelweights1.LengthCol+steelweights1.IntCol+steelweights1.IPDBeam+steelweights1.EPABeam+steelweights1.IPABeam
+                Bay3=steelweights1.Slab+steelweights1.WidthCol+steelweights1.IntCol+steelweights1.IPABeam+steelweights1.EPDBeam+steelweights1.IPDBeam
+                Bay4=steelweights1.Slab+steelweights1.IntCol+steelweights1.IPDBeam+steelweights1.IPABeam
+    
+            BuildingWeight1=floor*(BayWeights1.Bay1+LengthBays11*BayWeights1.Bay2+WidthBays11*BayWeights1.Bay3+IntBays11*BayWeights1.Bay4)
+            ConcWeight1=floor*(4*BayWeightsConc1.Bay1+LengthBays11*BayWeightsConc1.Bay2+WidthBays11*BayWeightsConc1.Bay3+IntBays11*BayWeightsConc1.Bay4)
+            SteelWeight1=CS.NoFloors*(BayWeightsSteel1.Bay1+LengthBays11*BayWeightsSteel1.Bay2+WidthBays11*BayWeightsSteel1.Bay3+IntBays11*BayWeightsSteel1.Bay4)
+            BuildingL1=LengthBays11*BaylLength1
+            BuildingW1=WidthBays11*BayWidth1
+    
+            ConBerC1=(ConcWeight1*0.453592)/(floor*(BuildingL1*BuildingW1)*0.0929) 
+            STBerC1=SteelWeight1*0.453592/(floor*(BuildingL1*BuildingW1)*0.0929) 
+            BuildindgBer=(BuildingWeight1*0.453592/(floor*(BuildingL1*BuildingW1)*0.0929))
+            
+            TotWeightkgm2.append(BuildindgBer) 
+            Rebar.append(STBerC1)
+            conc.append(ConBerC1)
+    
+    
+    
+    
+data1=np.array(TotWeightkgm2,dtype=float)
+plt.xlabel('Mass of Entire Strcuture (Kg/m2)')
+plt.ylabel('Frequency')
+plt.hist(data1,bins=900)
+plt.xlim(0,1500)
+plt.show()
+
+np.mean(data1)
+np.median(data1)
+math.sqrt(np.var(data1))
+np.percentile(data1,20)
+np.percentile(data1,80)
+
+
+data2=np.array(Rebar,dtype=float)
+plt.xlabel('Mass of Reinforcing (Kg/m2)')
+plt.ylabel('Frequency')
+plt.hist(data2,bins=500)
+plt.xlim(0,150)
+plt.show()
+
+np.mean(data2)
+np.median(data2)
+math.sqrt(np.var(data2))
+np.percentile(data2,20)
+np.percentile(data2,80)
+
+
+data3=np.array(conc,dtype=float)
+plt.xlabel('Mass of Concrete (Kg/m2)')
+plt.ylabel('Frequency')
+plt.hist(data3,bins=800)
+plt.xlim(0,1000)
+plt.show()
+
+np.mean(data3)
+np.median(data3)
+math.sqrt(np.var(data3))
+np.percentile(data3,20)
+np.percentile(data3,80)
+
+
+
+
+
+
+#%%
+#Monte Carlo
+
+
+EC1=[]
+EC2=[]
+EC3=[]
+
+SBJs=np.arange(2, 4.25, 0.25)
+baydims=range(8, 20, 1) 
+baycnt=range(1,21,1)
+ll=range(40,101,1)
+FFc=range(4000, 7001, 500)
+floors=range(1,10,1)
+x1=0.13
+x2=0.46
+x11=0.16
+x22=0.65
+x111=0.19
+x222=0.83
+
+
+for i in range(1000):
+            # Sample a random value from lengths_resampled
+            floor=np.random.choice(floors)
+            BaylLength1=np.random.choice(baydims)
+            BayWidth1=np.random.choice(baydims)
+            livey=np.random.choice(ll)
+            LengthBays11=np.random.choice(baycnt)      
+            WidthBays11=np.random.choice(baycnt)    
+            BuildingL1=LengthBays11*BaylLength1
+            BuildingW1=WidthBays11*BayWidth1
+            IntBays11=(WidthBays11-1)*(LengthBays11-1)
+            CS=ConcreteStructure
+            L=Loads
+            SBJ1=np.random.choice(SBJs)
+            CS.fc=np.random.choice(FFc)
+            CS.ClearSpanBeam=(SBJ1*12) 
+            CS.BayLength=BaylLength1
+            CS.BayWidth=BayWidth1
+            L.LL=livey 
+            ##
+            AreaofSlabSteel1=DesignConcSlab(CS,L)[0]
+            SlabThickness1=DesignConcSlab(CS,L)[1]
+            SlabBarY=DesignConcSlab(CS,L)[2]
+            hjoist=designconcjoist(CS, L)[0]
+            bjoist=designconcjoist(CS, L)[1]
+            JoistArea1=designconcjoist(CS, L)[0]*designconcjoist(CS, L)[1]
+            JoistSteelArea1=designconcjoist(CS, L)[2]+designconcjoist(CS, L)[3]
+            NJ1=math.ceil(CS.BayWidth/(CS.ClearSpanBeam/12))
+            Beams1=designconcbeams(CS, L)
+            Columns1=designcols(L, CS, Beams1, JoistArea1, SlabThickness1)
+            class concweights1:
+                IntCol=((Columns1[0][0]**2)/144)*145*CS.StoreyHeight*floor
+                LengthCol=((Columns1[1][0]**2)/144)*145*CS.StoreyHeight*floor
+                WidthCol=((Columns1[2][0]**2)/144)*145*CS.StoreyHeight*floor
+                CornerCol=((Columns1[3][0]**2)/144)*145*CS.StoreyHeight*floor
+                IPDBeam=((Beams1[0][0]*Beams1[0][1])/144)*145*BayWidth1
+                EPDBeam=((Beams1[1][0]*Beams1[1][1])/144)*145*BayWidth1
+                IPABeam=((Beams1[2][0]*Beams1[2][1])/144)*145*BaylLength1
+                EPABeam=((Beams1[3][0]*Beams1[3][1])/144)*145*BaylLength1
+                Joists=(JoistArea1/144)*145*BaylLength1*NJ1
+                Slab=(SlabThickness1/12)*145*BaylLength1*BayWidth1
+            class steelweights1:
+                Slab=(((AreaofSlabSteel)*3.4)*CS.BayLength*CS.BayWidth)
+                IntCol=(Columns1[0][1]*3.4)*CS.StoreyHeight*floor
+                LengthCol=(Columns1[1][1]*3.4)*CS.StoreyHeight*floor
+                WidthCol=(Columns1[2][1]*3.4)*CS.StoreyHeight*floor
+                CornerCol=(Columns1[3][1]*3.4)*CS.StoreyHeight*floor
+                IPDBeam=(Beams1[0][2]+Beams1[0][3])*3.34*CS.BayWidth
+                EPDBeam=(Beams1[1][0]+Beams1[1][3])*3.34*CS.BayWidth
+                IPABeam=(Beams1[2][0]+Beams1[2][3])*3.34*CS.BayLength
+                EPABeam=(Beams1[3][2]+Beams1[3][0])*3.34*CS.BayLength
+                Joists=NJ1*(JoistSteelArea1*3.34)*CS.BayLength
+            class totalweights1:
+                Slab=steelweights1.Slab+concweights1.Slab
+                IntCol=steelweights1.IntCol+concweights1.IntCol
+                LengthCol=steelweights1.LengthCol+concweights1.LengthCol
+                WidthCol=steelweights1.WidthCol+concweights1.WidthCol
+                CornerCol=steelweights1.CornerCol+concweights1.CornerCol
+                IPDBeam=steelweights1.IPDBeam+concweights1.IPDBeam
+                EPDBeam=steelweights1.EPDBeam+concweights1.EPDBeam
+                IPABeam=steelweights1.IPABeam+concweights1.IPABeam
+                EPABeam=steelweights1.EPABeam+concweights1.EPABeam
+                Joists=steelweights1.Joists+concweights1.Joists
+            class BayWeights1:
+                Bay1=totalweights1.Slab+totalweights1.IntCol+totalweights1.CornerCol+totalweights1.LengthCol+totalweights1.WidthCol+totalweights1.IPDBeam+totalweights1.EPDBeam+totalweights1.IPABeam+totalweights1.EPABeam
+                Bay2=totalweights1.Slab+2*totalweights1.LengthCol+2*totalweights1.IntCol+2*totalweights1.IPDBeam+totalweights1.EPABeam+totalweights1.IPABeam
+                Bay3=totalweights1.Slab+2*totalweights1.WidthCol+2*totalweights1.IntCol+2*totalweights1.IPABeam+totalweights1.EPDBeam+totalweights1.IPDBeam
+                Bay4=totalweights1.Slab+4*totalweights1.IntCol+2*totalweights1.IPDBeam+2*totalweights1.IPABeam
+            class BayWeightsConc1:
+                Bay1=concweights1.Slab+concweights1.IntCol+concweights1.CornerCol+concweights1.LengthCol+concweights1.WidthCol+concweights1.IPDBeam+concweights1.EPDBeam+concweights1.IPABeam+concweights1.EPABeam
+                Bay2=concweights1.Slab+concweights1.LengthCol+concweights1.IntCol+concweights1.IPDBeam+concweights1.EPABeam+concweights1.IPABeam
+                Bay3=concweights1.Slab+concweights1.WidthCol+concweights1.IntCol+concweights1.IPABeam+concweights1.EPDBeam+concweights1.IPDBeam
+                Bay4=concweights1.Slab+concweights1.IntCol+concweights1.IPDBeam+concweights1.IPABeam
+            class BayWeightsSteel1:
+                Bay1=steelweights1.Slab+steelweights1.IntCol+steelweights1.CornerCol+steelweights1.LengthCol+steelweights1.WidthCol+steelweights1.IPDBeam+steelweights1.EPDBeam+steelweights1.IPABeam+steelweights1.EPABeam
+                Bay2=steelweights1.Slab+steelweights1.LengthCol+steelweights1.IntCol+steelweights1.IPDBeam+steelweights1.EPABeam+steelweights1.IPABeam
+                Bay3=steelweights1.Slab+steelweights1.WidthCol+steelweights1.IntCol+steelweights1.IPABeam+steelweights1.EPDBeam+steelweights1.IPDBeam
+                Bay4=steelweights1.Slab+steelweights1.IntCol+steelweights1.IPDBeam+steelweights1.IPABeam
+    
+            BuildingWeight1=floor*(BayWeights1.Bay1+LengthBays11*BayWeights1.Bay2+WidthBays11*BayWeights1.Bay3+IntBays11*BayWeights1.Bay4)
+            ConcWeight1=floor*(4*BayWeightsConc1.Bay1+LengthBays11*BayWeightsConc1.Bay2+WidthBays11*BayWeightsConc1.Bay3+IntBays11*BayWeightsConc1.Bay4)
+            SteelWeight1=CS.NoFloors*(BayWeightsSteel1.Bay1+LengthBays11*BayWeightsSteel1.Bay2+WidthBays11*BayWeightsSteel1.Bay3+IntBays11*BayWeightsSteel1.Bay4)
+            BuildingL1=LengthBays11*BaylLength1
+            BuildingW1=WidthBays11*BayWidth1
+    
+            ConBerC1=(ConcWeight1*0.453592)/(floor*(BuildingL1*BuildingW1)*0.0929) 
+            STBerC1=SteelWeight1*0.453592/(floor*(BuildingL1*BuildingW1)*0.0929) 
+            BuildindgBer=(BuildingWeight1*0.453592/(floor*(BuildingL1*BuildingW1)*0.0929))
+            
+            EC11=ConBerC1*x1+STBerC1*x2
+            EC22=ConBerC1*x1+STBerC1*x22
+            EC33=ConBerC1*x111+STBerC1*x222
+            
+            EC1.append(ConBerC1)
+            EC2.append(EC22)
+            EC3.append(EC33)
+            
+    
+    
+    
+    
+data1=np.array(EC1,dtype=float)
+data2=np.array(EC2,dtype=float)
+data3=np.array(EC3,dtype=float)
+
+
+plt.figure(figsize=(10, 6))
+
+# Histogram for EC (Achievable Embodied Carbon)
+plt.hist(data1, bins=800, label='Achievable Embodied Carbon',alpha=0.8)
+
+# Histogram for EC2 (Average Embodied Carbon)
+plt.hist(data2, bins=900, label='Average Embodied Carbon',alpha=0.5)
+
+# Histogram for EC3 (Conservative Embodied Carbon)
+plt.hist(data3, bins=900, label='Conservative Embodied Carbon',alpha=0.5)
+
+plt.xlabel('Embodied Carbon of Reinforced Concrete Gravity Frame (KgCO2e/m2)')
+plt.ylabel('Frequency')
+plt.xlim(0, 300)
+plt.legend()
+plt.show()
+
+
+
+np.mean(data1)
+np.median(data1)
+math.sqrt(np.var(data1))
+np.percentile(data1,20)
+np.percentile(data1,80)
+
+
+np.mean(data2)
+np.median(data2)
+math.sqrt(np.var(data2))
+np.percentile(data2,20)
+np.percentile(data2,80)
+
+
+np.mean(data3)
+np.median(data3)
+math.sqrt(np.var(data3))
+np.percentile(data3,20)
+np.percentile(data3,80)
+            
+            
+    
+    
+achievable_ecConc = np.array(EC1, dtype=float)
+average_ecConc = np.array(EC2, dtype=float)
+conservative_ecConc = np.array(EC3, dtype=float)
+    
+np.savetxt('data_arrays.txt', (achievable_ecConc, average_ecConc, conservative_ecConc))
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Created on Tue May 23 16:43:37 2023
+
+@author: ahmad
+"""
+import math as math
+import numpy as np
+import matplotlib.pyplot as plt
+
+#Calculation of applied wind load 
+
+#Risk Catergory #III
+
+V=130 #mph #Constant 130 
+kd=0.85
+kzt=1.28
+ke=1
+gcpi=0.18
+kz=1.52
+qz=0.00256*kz*kzt*kd*ke*V**2
+gcpf=-0.29
+p=qz*(gcpi-gcpf) #psf 
+
+
+# Define Building Parameters
+
+BayL=50
+BayCount=5
+BuildingL=BayL*BayCount
+
+FloorH=12
+FloorCount=10
+BuildingH=FloorH*FloorCount
+#%%
+Fc=4000 #f'c
+fy=60000 #psi
+
+# Beging Design of  RC wall 
+
+def DesingRCSW(p,BuildingL,BuildingH,Fc,fy):
+    Vu=p*BuildingL*BuildingH/1000 #kip
+    Mu=Vu*BuildingH #kip-ft
+    bw=10 #ft
+    d=0.5 #ft 
+    ##
+    fvc=(2*0.75*bw*12*d*12*math.sqrt(Fc))/1000
+    fmn=0.9*(145*bw*d*BuildingH)*BuildingH*0.5/1000
+    avmin=max((0.75*bw*12*math.sqrt(Fc)*(1/fy)),50*bw*12*d*12*6/fy)
+    fvs=0.75*avmin*fy*d*12/20000
+    fvn=fvc+fvs
+    ##
+    Wapp=Vu/BuildingH #kip/ft
+    Ec=57000*math.sqrt(Fc/144)
+    Ig=(bw**3)*d/12
+    theta=(Wapp*(BuildingH**3))/(6*0.7*Ec*Ig)
+    ##
+    def CheckWall(fvn,fmn,Vu,Mu,theta):
+        if fvn<Vu or fmn/Mu<1.5 or theta>1/500:
+            Flag=0
+        else:
+            Flag=1
+        return Flag
+    Flag=CheckWall(fvn, fmn, Vu, Mu, theta)
+    def LoopWall(Flag,d,bw,avmin):
+        Bw=bw
+        D=d
+        Avmin=avmin
+        while Flag==0:
+            ##
+            Fvc=(2*0.75*Bw*12*D*12*math.sqrt(Fc))/1000
+            Fmn=0.9*(145*Bw*D*BuildingH)*BuildingH*0.5/1000
+            Fvs=0.75*Avmin*fy*D*12/20000
+            Fvn=Fvc+Fvs
+            ##
+            Wapp=Vu/BuildingH #kip/ft
+            Ec=57000*math.sqrt(Fc/144)
+            Ig=(Bw**3)*D/12
+            Theta=(Wapp*(BuildingH**3))/(6*0.7*Ec*Ig)
+            ##
+            Bw=Bw+0.5
+            D=D+(1/12)
+            Avmin=Avmin+0.1
+            ##
+            Flag=CheckWall(Fvn, Fmn, Vu, Mu, Theta)
+        return Bw,D,Avmin
+    Bw=LoopWall(Flag, d, bw, avmin)[0]
+    D=LoopWall(Flag, d, bw, avmin)[1]
+    Avmin=LoopWall(Flag, d, bw, avmin)[2]
+    
+    ConcWt=Bw*D*BuildingH*145
+    SteelWt=(1.65*Avmin*BuildingH)*3.4
+    
+    return ConcWt, SteelWt
+ConcLB=DesingRCSW(p, BuildingL, BuildingH, Fc, fy)[0] #lbs
+StLB=DesingRCSW(p, BuildingL, BuildingH, Fc, fy)[1] #lbs 
+
+
+
+aaaConcKG=(ConcLB*0.453592)/100000
+aaaStKG=(StLB*0.453592)/100
+
+#%%
+#Begin Design of RM Wall
+
+Vultimate=p*BuildingL*BuildingH/1000 #kips
+
+#
+fm=2000 #psi
+Em=1000000 #psi
+
+def DesignRMSW(fm,Em,BuildingL,BuildingH,Vultimate):
+    #Ordinary RM SW
+    WallLength=10 #ft
+    Fb=0.45*fm #psi
+    V=Vultimate #kips
+    M=V*BuildingH #kip ft
+    b=7.63 #in 
+    d=WallLength*12-4 #in 
+    As=0.5 #in2
+    n=29
+    p=As/(b*d)
+    pn=p*n
+    k=math.sqrt((2*pn)+((2*pn)**2))
+    j=1-k/3
+    fb=(2*M*1000)/(j*k*b*(d**2))
+    fv=V*1000/(b*WallLength*12)
+    FV=0.5*(4-1.75*(M/(V*BuildingH)))*math.sqrt(fm)
+    def checkflexure(Fb,fb,FV,fv):
+        if Fb<fb or FV<fv :
+            Flag=1
+        else:
+            Flag=0
+        return Flag
+    Flag1=checkflexure(Fb, fb,FV,fv)
+    def loopMF(Flag1,WallLength):
+        WL=WallLength
+        B=b
+        while Flag1==1:
+            Fb1=0.45*fm #psi
+            V=Vultimate
+            M=V*BuildingH
+            d=WL*12-4 #in 
+            As=0.5 #in2
+            n=29
+            p=As/(b*d)
+            pn=p*n
+            k=math.sqrt((2*pn)+((2*pn)**2))
+            j=1-k/3
+            fb1=(2*M*1000)/(j*k*b*(d**2))
+            fv1=V*1000/(b*WL*12)
+            FV1=0.5*(4-1.75*(M/(V*BuildingH)))*math.sqrt(fm)
+            B=B+7.63
+            WL=WL+1
+            
+            Flag1=checkflexure(Fb1, fb1,FV1,fv1)
+        return WL,B
+    WallLength=loopMF(Flag1, WallLength)[0]
+    b=loopMF(Flag1, WallLength)[1]
+    AsCorner=0.2 #in2
+    AsNominal=0.2#in2 #spaced at max 120 in space at every 10 in 
+    As=AsCorner*2+AsNominal*WallLength/5 #in
+    
+    MasonWt=WallLength*(b/12)*BuildingH*145
+    RebarWt=As*BuildingH*3.4*1.65
+    
+    return MasonWt, RebarWt
+MasonryLB=DesignRMSW(fm, Em, BuildingL, BuildingH, Vultimate)[0]
+MasonrySteelLB=DesignRMSW(fm, Em, BuildingL, BuildingH, Vultimate)[1]
+    
+aaaaMasonryKG=(MasonryLB*0.453592)/10**5
+aaaaMasonrySteel=(MasonrySteelLB*0.453592)/100
+
+#%%
+#Monte Carlo Simulation 
+Cwt=[]            
+Cswt=[]           
+baydims=range(8, 51, 1) 
+baycnt=range(2,21,1)
+FFc=range(3000, 5001, 500)  
+Vs=range(80,200,1)
+Heights=range(9,14,1)
+Floors=range(2,11,1)
+for i in range (5000):
+    V=np.random.choice(Vs) #mph
+    kd=0.85
+    kzt=1.28
+    ke=1
+    gcpi=0.18
+    kz=1.52
+    qz=0.00256*kz*kzt*kd*ke*V**2
+    gcpf=-0.29
+    p=qz*(gcpi-gcpf) #psf 
+
+    
+    BayL=np.random.choice(baydims)
+    BayCount=np.random.choice(baycnt)
+    BuildingL=BayL*BayCount
+
+    FloorH=np.random.choice(Heights)
+    FloorCount=np.random.choice(Floors)
+    BuildingH=FloorH*FloorCount
+
+    Fc=np.random.choice(FFc) #f'c
+    fy=60000 #psi
+    
+    ConcLB=DesingRCSW(p, BuildingL, BuildingH, Fc, fy)[0] #lbs
+    StLB=DesingRCSW(p, BuildingL, BuildingH, Fc, fy)[1] #lbs 
+
+    aConcKG=(ConcLB*0.453592)/(10**5)
+    aStKG=(StLB*0.453592)/(10**5)
+    
+    Cwt.append(aConcKG)
+    Cswt.append(aStKG)
+##
+data=np.array(Cwt,dtype=float)
+plt.xlabel('Weight of Concrete in Reinforced Concrete ShearWall (Kg x 10 e5)')
+plt.ylabel('Frequency')
+plt.hist(data,bins=200)
+plt.show()
+
+
+
+np.mean(data)
+np.percentile(data,20)
+np.percentile(data,80)
+np.median(data)
+math.sqrt(np.var(data))
+
+##
+data1=np.array(Cswt,dtype=float)
+plt.xlabel('Weight of Reinforcing in Reinforced Concrete ShearWall (Kg x 10 e2)')
+plt.ylabel('Frequency')
+plt.hist(data1,bins=200)
+plt.show()
+
+
+
+np.mean(data1)
+np.percentile(data1,20)
+np.percentile(data1,80)
+np.median(data1)
+math.sqrt(np.var(data1))
+
+C=data*0.13
+C2=data*0.162
+C3=data*0.194
+S=data1*0.465
+S2=data1*0.655
+S3=data1*0.832
+
+RcAch=C+S
+RcAvg=C2+S2
+RcCon=C3+S3
+np.savetxt('data_arraysRC.txt', (RcAch, RcAvg, RcCon))
+
+
+
+
+
+#%%
+#Monte Carlo Simulation    
+Mwt=[]
+Mrwt=[]        
+baydims=range(8, 51, 1) 
+baycnt=range(2,21,1)
+FFm=range(1000, 2751, 100)  
+Vs=range(80,200,1)
+Heights=range(9,14,1)
+Floors=range(2,11,1)
+for i in range (5000):
+    V=np.random.choice(Vs) #mph
+    kd=0.85
+    kzt=1.28
+    ke=1
+    gcpi=0.18
+    kz=1.52
+    qz=0.00256*kz*kzt*kd*ke*V**2
+    gcpf=-0.29
+    p=qz*(gcpi-gcpf) #psf 
+    
+    Vultimate=p*BuildingL*BuildingH/1000 #kips
+
+
+    BayL=np.random.choice(baydims)
+    BayCount=np.random.choice(baycnt)
+    BuildingL=BayL*BayCount
+
+    FloorH=np.random.choice(Heights)
+    FloorCount=np.random.choice(Floors)
+    BuildingH=FloorH*FloorCount
+
+    fm=np.random.choice(FFm) #psi
+    Em=1000000 #psi
+    
+    MasonryLB=DesignRMSW(fm, Em, BuildingL, BuildingH, Vultimate)[0]
+    MasonrySteelLB=DesignRMSW(fm, Em, BuildingL, BuildingH, Vultimate)[1]
+        
+    aaMasonryKG=(MasonryLB*0.453592)/10**5
+    aaMasonrySteel=(MasonrySteelLB*0.453592)/10**5
+    
+    Mwt.append(aaMasonryKG)
+    Mrwt.append(aaMasonrySteel)
+    
+    
+##
+data2=np.array(Mwt,dtype=float)
+plt.xlabel('Weight of Masonry in Reinforced Masonry ShearWall (Kg x 10e5)')
+plt.ylabel('Frequency')
+plt.hist(data2,bins=300)
+plt.show()
+
+np.mean(data2)
+np.percentile(data2,20)
+np.percentile(data2,80)
+np.median(data2)
+math.sqrt(np.var(data2))
+
+##
+data3=np.array(Mrwt,dtype=float)
+plt.xlabel('Weight of Reinforcing in Reinforced Masonry ShearWall (Kg x 10e2)')
+plt.ylabel('Frequency')
+plt.hist(data3,bins=200)
+plt.show()
+
+np.mean(data3)
+np.percentile(data3,20)
+np.percentile(data3,80)
+np.median(data3)
+math.sqrt(np.var(data3))
+
+
+M=data*0.16
+M2=data*0.18
+M3=data*0.23
+Ss=data1*0.465
+Ss2=data1*0.655
+Ss3=data1*0.832
+
+RmAch=M+Ss
+RmAvg=M2+Ss2
+RmCon=M3+Ss3
+np.savetxt('data_arraysRM.txt', (RmAch, RmAvg, RmCon))    
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Created on Thu May 25 13:48:41 2023
+
+@author: ahmad
+"""
+#Load packages
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+#%%
+#Loading the concrete data
+loaded_dataC = np.loadtxt('data_arrays.txt')
+
+achievable_ecC = loaded_dataC[0] #Achievable Embodied Carbon of Concrete
+average_ecC = loaded_dataC[1] #Average Embodied Carbon of Concrete
+conservative_ecC = loaded_dataC[2] #conservative Embodied Carbon of Concrete
+#%%
+#Loading the steel data 
+loaded_data = np.load('data_arrays.npz')
+
+achievable_ecS = loaded_data['achievable_ecS'] #Achievable Embodied Carbon of Steel
+average_ecS = loaded_data['average_ecS'] #Average Embodied Carbon of Steel
+conservative_ecS = loaded_data['conservative_ecS'] #conservative Embodied Carbon of Steel
+#%%
+#Vio plot for both steel and concrete 
+# Combine the concrete and steel data
+combined_data = [achievable_ecC, average_ecC, conservative_ecC, achievable_ecS, average_ecS, conservative_ecS]
+# Create labels for the raincloud plot
+labels = ['Achievable (Concrete)', 'Average (Concrete)', 'Conservative (Concrete)',
+          'Achievable (Steel)', 'Average (Steel)', 'Conservative (Steel)']
+#Remove Outlier Data
+q1 = np.percentile(combined_data, 25, axis=1)
+q3 = np.percentile(combined_data, 75, axis=1)
+iqr = q3 - q1
+
+# Define the lower and upper bounds to identify outliers
+lower_bound = q1 - 1.5 * iqr
+upper_bound = q3 + 1.5 * iqr
+
+# Remove outliers from each data group
+filtered_data = [data[(data >= lower) & (data <= upper)] for data, lower, upper in zip(combined_data, lower_bound, upper_bound)]
+#Plot the Vio Plot 
+plt.figure(figsize=(10, 6))
+ax = sns.violinplot(data=filtered_data, inner='box', palette='Set2')
+ax.set_xticklabels(labels, rotation=45, ha='right')
+ax.set_ylabel('Embodied Carbon (KgCO2e/m2)')
+ax.set_title('Embodied Carbon of Gravity Frames')
+plt.ylim(0, 400)
+plt.tight_layout()
+plt.show()
+#%%
+import numpy as np
+
+# Define the labels for the categories
+labels = ['Steel', 'Concrete']
+
+# Define the data arrays for each category
+data_arrays = [
+    [achievable_ecS, achievable_ecC],
+    [average_ecS, average_ecC],
+    [conservative_ecS, conservative_ecC]
+]
+
+# Create subplots for each category
+fig, axs = plt.subplots(1, 3, figsize=(12, 6))
+
+# Loop through each category
+for i, data in enumerate(data_arrays):
+    category_data = []
+    # Loop through each data array in the category
+    for array in data:
+        # Calculate the interquartile range (IQR) for the data array
+        q1 = np.percentile(array, 25)
+        q3 = np.percentile(array, 75)
+        iqr = q3 - q1
+
+        # Define the lower and upper bounds to identify outliers
+        lower_bound = q1 - 1.5 * iqr
+        upper_bound = q3 + 1.5 * iqr
+
+        # Remove outliers from the data array
+        filtered_data = array[(array >= lower_bound) & (array <= upper_bound)]
+        
+        # Append the filtered data to the category data list
+        category_data.append(filtered_data)
+
+    # Create boxplots for the category with the filtered data
+    axs[i].boxplot(category_data, labels=labels)
+    axs[i].set_ylabel('Embodied Carbon (KgCO2e/m2)')
+    axs[i].set_title(['Achievable', 'Average', 'Conservative'][i])
+
+plt.tight_layout()
+plt.show()
+
+#%%
+#Plotting Histograms of Gravity frames 
+plt.figure(figsize=(10, 6))
+
+# Achievable Embodied Carbon
+plt.hist([achievable_ecS, achievable_ecC], bins=500, label=['Steel', 'Concrete'])
+plt.xlabel('Embodied Carbon (KgCO2e/m2)')
+plt.ylabel('Frequency')
+plt.title('Achievable Embodied Carbon')
+plt.legend()
+plt.xlim(0,450)
+plt.tight_layout()
+plt.show()
+
+# Average Embodied Carbon
+plt.figure(figsize=(10, 6))
+plt.hist([average_ecS, average_ecC], bins=500, label=['Steel', 'Concrete'])
+plt.xlabel('Embodied Carbon (KgCO2e/m2)')
+plt.ylabel('Frequency')
+plt.title('Average Embodied Carbon')
+plt.legend()
+plt.xlim(0,450)
+plt.tight_layout()
+plt.show()
+
+# Conservative Embodied Carbon
+plt.figure(figsize=(10, 6))
+plt.hist([conservative_ecS, conservative_ecC], bins=500, label=['Steel', 'Concrete'])
+plt.xlabel('Embodied Carbon (KgCO2e/m2)')
+plt.ylabel('Frequency')
+plt.title('Conservative Embodied Carbon')
+plt.legend()
+plt.xlim(0,500)
+plt.tight_layout()
+plt.show()
+#%%
+
+import scipy.stats as stats
+
+# Define your two non-normal distributions as arrays or lists
+distribution1 = conservative_ecC
+distribution2 = conservative_ecS
+
+# Perform the Mann-Whitney U test
+statistic, p_value = stats.mannwhitneyu(distribution1, distribution2)
+
+# Print the test statistic and p-value
+print("Mann-Whitney U statistic:", statistic)
+print("p-value:", p_value)
+#%%
+#Load RC SW data
+loaded_dataRSW = np.loadtxt('data_arraysRC.txt')
+RC1=loaded_dataRSW[0] #Achievable Embodied Carbon of Reinforced Concrete Shear Wall
+RC2=loaded_dataRSW[1] #Average Embodied Carbon of Reinforced Concrete Shear Wall
+RC3=loaded_dataRSW[2] #Conservative Embodied Carbon of Reinforced Concrete Shear Wall
+
+#Load RM SW data 
+loaded_dataRMS=np.loadtxt('data_arraysRM.txt')
+RM1=loaded_dataRMS[0] #Achievable Embodied Carbon of Reinforced Masonry Shear Wall
+RM2=loaded_dataRMS[1] #Average Embodied Carbon of Reinforced Masonry Shear Wall
+RM3=loaded_dataRMS[2] #Conservative Embodied Carbon of Reinforced Masonry Shear Wall
+#%%
+#Vio plot for both masonry and concrete 
+# Combine the concrete and masonry
+combined_data = [RC1, RC2, RC3, RM1, RM2, RM3]
+# Create labels for the raincloud plot
+labels = ['Achievable (Concrete)', 'Average (Concrete)', 'Conservative (Concrete)',
+          'Achievable (Masonry)', 'Average (Masonry)', 'Conservative (Masonry)']
+#Remove Outlier Data
+q1 = np.percentile(combined_data, 25, axis=1)
+q3 = np.percentile(combined_data, 75, axis=1)
+iqr = q3 - q1
+
+# Define the lower and upper bounds to identify outliers
+lower_bound = q1 - 1.5 * iqr
+upper_bound = q3 + 1.5 * iqr
+
+# Remove outliers from each data group
+filtered_data = [data[(data >= lower) & (data <= upper)] for data, lower, upper in zip(combined_data, lower_bound, upper_bound)]
+#Plot the Vio Plot 
+plt.figure(figsize=(10, 6))
+ax = sns.violinplot(data=filtered_data, inner='box', palette='Set2')
+ax.set_xticklabels(labels, rotation=45, ha='right')
+ax.set_ylabel('Embodied Carbon (KgCO2e x 10e5)')
+ax.set_title('Embodied Carbon of Shear Walls')
+plt.ylim(0, 12)
+plt.tight_layout()
+plt.show()
+#%%
+import numpy as np
+
+# Define the labels for the categories
+labels = ['Masonry', 'Concrete']
+
+# Define the data arrays for each category
+data_arrays = [[RM1, RC1], [RM2, RC2], [RM3, RC3]]
+
+# Create subplots for each category
+fig, axs = plt.subplots(1, 3, figsize=(12, 6))
+
+# Loop through each category
+for i, data in enumerate(data_arrays):
+    category_data = []
+    # Loop through each data array in the category
+    for array in data:
+        # Calculate the interquartile range (IQR) for the data array
+        q1 = np.percentile(array, 25)
+        q3 = np.percentile(array, 75)
+        iqr = q3 - q1
+
+        # Define the lower and upper bounds to identify outliers
+        lower_bound = q1 - 1.5 * iqr
+        upper_bound = q3 + 1.5 * iqr
+
+        # Remove outliers from the data array
+        filtered_data = array[(array >= lower_bound) & (array <= upper_bound)]
+        
+        # Append the filtered data to the category data list
+        category_data.append(filtered_data)
+
+    # Create boxplots for the category with the filtered data
+    axs[i].boxplot(category_data, labels=labels)
+    axs[i].set_ylabel('Embodied Carbon (KgCO2e x 10e5)')
+    axs[i].set_title(['Achievable', 'Average', 'Conservative'][i])
+
+plt.tight_layout()
+plt.show()
+
+#%%
+#Plotting Histograms of Gravity frames 
+plt.figure(figsize=(10, 6))
+
+# Achievable Embodied Carbon
+plt.hist([RM1, RC1], bins=200, label=['Masonry', 'Concrete'])
+plt.xlabel('Embodied Carbon (KgCO2e x 10e5)')
+plt.ylabel('Frequency')
+plt.title('Achievable Embodied Carbon')
+plt.legend()
+plt.xlim(0,20)
+plt.tight_layout()
+plt.show()
+
+# Average Embodied Carbon
+plt.figure(figsize=(10, 6))
+plt.hist([RM2, RC2], bins=200, label=['Masonry', 'Concrete'])
+plt.xlabel('Embodied Carbon (KgCO2e x 10e5)')
+plt.ylabel('Frequency')
+plt.title('Average Embodied Carbon')
+plt.legend()
+plt.xlim(0,20)
+plt.tight_layout()
+plt.show()
+
+# Conservative Embodied Carbon
+plt.figure(figsize=(10, 6))
+plt.hist([RM3, RC3], bins=200, label=['Masonry', 'Concrete'])
+plt.xlabel('Embodied Carbon (KgCO2e x 10e5)')
+plt.ylabel('Frequency')
+plt.title('Conservative Embodied Carbon')
+plt.legend()
+plt.xlim(0,20)
+plt.tight_layout()
+plt.show()
+#%%
+#Perform U-Test
+
+import scipy.stats as stats
+
+# Define your two non-normal distributions as arrays or lists
+distribution1 = RM3
+distribution2 = RC3
+
+# Perform the Mann-Whitney U test
+statistic, p_value = stats.mannwhitneyu(distribution1, distribution2)
+
+# Print the test statistic and p-value
+print("Mann-Whitney U statistic:", statistic)
+print("p-value:", p_value)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    
+
+
+    
+    
+                
+    
+ 
+
+
+
+
+
+
+
+    
+        
+        
+            
+        
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+            
+
+
+    
+    
+
+
+
+
+    
+    
+
+           
+        
+            
+        
+
+
+
+
+    
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    
+
+
+    
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    
